@@ -144,8 +144,8 @@ const defaultTerminalAdmin = {
     id: 'admin-terminal-default',
     username: 'admin',
     passwordHash: hashPassword('admin'),
-    role: ROLE_ADMIN,
-    displayName: '终端管理员'
+    role: ROLE_TERMINAL,
+    displayName: '超级管理员'
 };
 
 // 获取本机局域网 IP
