@@ -142,9 +142,9 @@ function hashPassword(password) {
 
 const defaultTerminalAdmin = {
     id: 'admin-terminal-default',
-    username: '2203408',
-    passwordHash: hashPassword('zyyfy666'),
-    role: ROLE_TERMINAL,
+    username: 'admin',
+    passwordHash: hashPassword('admin'),
+    role: ROLE_ADMIN,
     displayName: '终端管理员'
 };
 
@@ -787,8 +787,8 @@ function normalizeData(rawData = {}) {
 
     data.admins = normalizedAdmins.map(admin => {
         if (admin.username === defaultTerminalAdmin.username) {
-            if (admin.role !== ROLE_TERMINAL) changed = true;
-            return { ...admin, role: ROLE_TERMINAL };
+            if (admin.role !== defaultTerminalAdmin.role) changed = true;
+            return { ...admin, role: defaultTerminalAdmin.role };
         }
         return admin;
     });
@@ -800,11 +800,6 @@ function normalizeData(rawData = {}) {
 
     if (!Array.isArray(data.admins)) {
         data.admins = [{ ...defaultTerminalAdmin }];
-        changed = true;
-    }
-
-    if (!data.admins.some(admin => admin.role === ROLE_TERMINAL)) {
-        data.admins.unshift({ ...defaultTerminalAdmin });
         changed = true;
     }
 
