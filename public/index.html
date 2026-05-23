@@ -1,0 +1,1809 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- 禁止浏览器缓存 HTML 页面 -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>医院临床医生排班系统</title>
+    
+    <!-- Tailwind CSS (local offline bundle) -->
+    <script src="vendor/tailwindcss.js"></script>
+    
+    <!-- Vue 3 (local offline bundle) -->
+    <script src="vendor/vue.global.js"></script>
+    
+    <!-- Export libraries (local offline bundle) -->
+    <script src="vendor/xlsx.full.min.js"></script>
+    <script src="vendor/html2pdf.bundle.min.js"></script>
+
+    <!-- Quill Editor (Rich Text) -->
+    <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
+    <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
+    <style>
+        /* 修复 Quill 表格基础样式 */
+        .ql-editor table {
+            border-collapse: collapse;
+            table-layout: fixed;
+            width: 100%;
+            margin-bottom: 1rem;
+        }
+        .ql-editor td {
+            border: 1px solid #d1d5db;
+            padding: 4px 8px;
+            height: 24px;
+        }
+    </style>
+
+    <script>
+        // 浏览器兼容性检查 (针对 IE)
+        (function() {
+            var ua = window.navigator.userAgent;
+            var isIE = ua.indexOf('MSIE ') > -1 || ua.indexOf('Trident/') > -1;
+            if (isIE) {
+                alert('检测到您正在使用 Internet Explorer 浏览器。\n\n本系统使用了现代 Web 技术（Vue 3），不支持 IE 浏览器，这会导致页面显示空白或功能异常。\n\n请使用 Google Chrome、Microsoft Edge 或 Firefox 浏览器打开系统。');
+                document.write('<div style="padding: 20px; color: red; font-weight: bold; text-align: center; font-size: 20px;">系统不支持 IE 浏览器，请切换至 Chrome 或 Edge 浏览器访问。</div>');
+            }
+        })();
+    </script>
+
+    <script>
+        // 动态加载带有时间戳的静态资源以防缓存
+        const version = new Date().getTime();
+        document.write('<link rel="stylesheet" href="css/styles.css?v=' + version + '">');
+    </script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        medical: {
+                            light: '#e0f2fe',
+                            DEFAULT: '#0ea5e9',
+                            dark: '#0369a1',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="text-gray-800 h-screen overflow-auto">
+    <div id="app" class="app-shell h-full flex flex-col" @click="closePopup(); closeClearMenu(); closeLoginPanel()">
+        <!-- Header -->
+        <header class="win7-header text-white py-3 px-5 shrink-0">
+            <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                <h1 class="app-header-title text-xl font-bold flex items-center min-w-0">
+                    <svg class="w-6 h-6 mr-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+                    <span class="break-words">临床医生智能排班系统</span>
+                </h1>
+                <div class="app-header-controls flex flex-wrap gap-2 items-center xl:justify-end" v-if="currentUser">
+                    <div class="px-2 py-1 rounded-md border border-white/30 bg-white/10 text-sm flex items-center gap-2">
+                        <span class="opacity-90">当前科室</span>
+                        <select :value="currentDepartmentId" @change="switchDepartment($event.target.value)" class="win7-select !min-h-[26px] px-2 py-0.5 text-sm text-gray-800 min-w-[140px] bg-white">
+                            <option v-for="department in departments" :key="department.id" :value="department.id">
+                                {{ department.name }}
+                            </option>
+                        </select>
+                    </div>
+                    
+                    <div class="primary-manager-toolbar flex items-center gap-1 bg-white/10 p-1 rounded-md border border-white/20">
+                        <button v-if="canEditData" @click="openDoctorManager" class="win7-btn !px-3 primary-manager-btn" :class="activePrimaryManager === 'doctor' ? 'primary-manager-btn--active' : ''" :aria-pressed="activePrimaryManager === 'doctor'" title="人员配置">
+                            人员配置
+                        </button>
+                        <button v-if="canEditData" @click="openModuleManager" class="win7-btn !px-3 primary-manager-btn" :class="activePrimaryManager === 'module' ? 'primary-manager-btn--active' : ''" :aria-pressed="activePrimaryManager === 'module'" title="模块设计">
+                            模块设计
+                        </button>
+                        <button v-if="canEditData" @click="openShiftManager" class="win7-btn !px-3 primary-manager-btn" :class="activePrimaryManager === 'shift' ? 'primary-manager-btn--active' : ''" :aria-pressed="activePrimaryManager === 'shift'" title="班次设置">
+                            班次设置
+                        </button>
+                    </div>
+
+                    <div class="flex items-center gap-1">
+                        <button v-if="canManageAdmins" @click="openDepartmentManager" class="win7-btn !px-2" title="科室管理">
+                            科室
+                        </button>
+                        <button v-if="canManageAdmins" @click="openAdminManager" class="win7-btn !px-2" title="管理员管理">
+                            管理
+                        </button>
+                        <button @click="openHistoryManager" class="win7-btn !px-2" :class="!canEditData ? 'opacity-80' : ''" :title="canEditData ? '查看并恢复历史排班记录' : '历史记录仅管理员可查看'">
+                            历史
+                        </button>
+                    </div>
+
+                    <div class="px-2 py-1 rounded-md border border-white/30 bg-white/10 text-xs">
+                        {{ currentUser.displayName }}
+                    </div>
+                    <div class="relative" @click.stop>
+                        <button @click="toggleLoginPanel" class="win7-btn">
+                            {{ canEditData ? '切换账号' : '管理员登录' }}
+                        </button>
+                        <div v-if="showLoginPanel" class="absolute right-0 top-full mt-2 w-80 rounded-lg border border-slate-300 bg-white p-4 shadow-xl z-[220]">
+                            <form @submit.prevent="handleLogin" class="flex flex-col gap-3">
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">管理员账号</label>
+                                    <input v-model="loginForm.username" type="text" autocomplete="username" class="win7-input p-2 w-full text-sm text-gray-800 placeholder:text-gray-400" placeholder="请输入账号">
+                                </div>
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">登录密码</label>
+                                    <div class="flex gap-2 items-center">
+                                        <input v-model="loginForm.password" :type="showLoginPassword ? 'text' : 'password'" autocomplete="current-password" class="win7-input p-2 w-full text-sm text-gray-800 placeholder:text-gray-400" placeholder="请输入密码">
+                                        <button type="button" @click="showLoginPassword = !showLoginPassword" class="win7-btn whitespace-nowrap min-w-[64px]">
+                                            {{ showLoginPassword ? '隐藏' : '显示' }}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="flex justify-between items-center pt-1">
+                                    <button v-if="canEditData" type="button" @click="logout" class="win7-btn">
+                                        切回游客
+                                    </button>
+                                    <span v-else class="text-xs text-gray-500">当前为游客模式</span>
+                                    <button type="submit" class="win7-btn win7-btn-primary" :disabled="isSubmittingLogin">
+                                        {{ isSubmittingLogin ? '登录中...' : '登录' }}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content Layout with Sidebar -->
+        <div class="flex-grow flex overflow-hidden">
+            <!-- Left: Calendar Area -->
+            <main class="schedule-workspace flex-grow p-4 flex flex-col gap-4 overflow-hidden border-r border-gray-300">
+                <!-- Toolbar Area -->
+            <div class="win7-toolbar schedule-toolbar p-3 flex flex-wrap gap-4 items-center justify-between shrink-0">
+                <div class="schedule-toolbar__cluster flex items-center gap-4">
+                    <div class="schedule-toolbar__section schedule-toolbar__section--segmented">
+                    <div class="flex rounded-md shadow-sm" role="group">
+                        <button type="button" @click="viewMode = 'week'" :class="viewMode === 'week' ? 'win7-btn win7-btn-primary' : 'win7-btn'" class="rounded-r-none">
+                            周视图
+                        </button>
+                        <button type="button" @click="viewMode = 'month'" :class="viewMode === 'month' ? 'win7-btn win7-btn-primary' : 'win7-btn'" class="rounded-l-none border-l-0">
+                            月视图
+                        </button>
+                    </div>
+                    </div>
+
+                    <div class="win7-subpanel schedule-period-panel flex items-center gap-2 px-2 py-1.5">
+                        <button @click="prevPeriod" class="win7-btn !min-h-[28px] !px-2">&larr;</button>
+                        <span class="schedule-period-panel__label font-bold text-gray-700 min-w-[160px] text-center">{{ displayDateRange }}</span>
+                        <button @click="nextPeriod" class="win7-btn !min-h-[28px] !px-2">&rarr;</button>
+                    </div>
+
+                    <div class="schedule-toolbar__section flex items-center gap-2 border-l border-slate-300 pl-4">
+                        <label class="schedule-toolbar__label text-sm text-gray-600 font-medium">人员筛选:</label>
+                        <select v-model="filterCategory" class="win7-select p-1.5 text-sm">
+                            <option value="all">全部人员</option>
+                            <option v-for="module in doctorCategoryOptions" :key="'filter-' + module.value" :value="module.value">{{ module.label }}</option>
+                        </select>
+                    </div>
+
+                    <div class="schedule-toolbar__section flex items-center gap-2 border-l border-slate-300 pl-4">
+                        <label class="schedule-toolbar__label text-sm text-gray-600 font-medium">展示密度:</label>
+                        <button
+                            @click="compactMode = !compactMode"
+                            class="win7-btn"
+                            :class="compactMode ? 'win7-btn-primary' : ''">
+                            {{ compactMode ? '紧凑模式' : '标准模式' }}
+                        </button>
+                    </div>
+
+                    <div v-if="canEditData" class="win7-subpanel schedule-toolbar__section schedule-toolbar__section--settings flex flex-wrap items-center gap-4 px-3 py-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-sm font-bold text-gray-700">界面配置:</span>
+                            <button @click="showDisplaySettings = true" class="win7-btn flex items-center gap-1">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                字体与间距
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="schedule-actions flex items-center gap-3 flex-wrap">
+                    <template v-if="canEditData">
+                        <button @click="openAutoScheduleModal" class="win7-btn win7-btn-primary flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                            批量自动排班
+                        </button>
+                        <button @click="openHistoryManager" class="win7-btn flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            历史记录/恢复
+                        </button>
+                        <div class="w-px h-6 bg-gray-300 mx-1"></div>
+                        <div class="relative" @click.stop="">
+                            <button @click="toggleClearMenu" class="win7-btn win7-btn-danger flex items-center gap-1">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                按分组清空 ▼
+                            </button>
+                            <div v-if="showClearMenu" class="schedule-clear-menu absolute right-0 top-full mt-1 w-40 bg-white border border-gray-300 shadow-lg rounded z-[200]">
+                                <button
+                                    v-for="module in clearableModules"
+                                    :key="'clear-' + module.value"
+                                    @click="clearGroupSchedule(module.value)"
+                                    class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-red-600 border-t border-gray-100 first:border-t-0">
+                                    {{ module.label }}
+                                </button>
+                            </div>
+                        </div>
+                        <button @click="clearCurrentView" class="win7-btn win7-btn-danger">
+                            清空当前界面
+                        </button>
+                        <button @click="clearAllSchedule" class="win7-btn win7-btn-danger">
+                            清空全部排班
+                        </button>
+                        <button
+                            v-if="recentClearAction"
+                            @click="undoRecentClearAction"
+                            class="win7-btn border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100">
+                            撤销最近一次清空
+                        </button>
+                        <div v-if="recentClearAction" class="px-3 py-1.5 rounded-md border border-amber-200 bg-amber-50 text-xs text-amber-700">
+                            可撤销：{{ recentClearAction.summary }}
+                        </div>
+                    </template>
+                    <button v-if="canEditData" @click="exportExcel" class="win7-btn win7-btn-success">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        导出 Excel
+                    </button>
+                    <button v-if="canEditData" @click="exportWord" class="win7-btn">
+                        导出 Word
+                    </button>
+                    <button v-if="canEditData" @click="exportPDF" class="win7-btn">
+                        导出 PDF
+                    </button>
+                </div>
+            </div>
+
+            <!-- Table Area -->
+            <div class="win7-panel schedule-board flex-grow flex flex-col overflow-hidden relative">
+                <!-- Schedule Table -->
+                <div class="table-container flex-grow relative" id="schedule-container" @scroll="closePopup">
+                    <table class="w-full text-sm text-center">
+                        <thead>
+                            <tr>
+                                <th class="schedule-board__corner w-[92px] max-w-[92px] p-2 bg-gray-100 font-bold text-gray-700 z-30">
+                                    姓名 / 日期
+                                </th>
+                                <th v-for="day in calendarDays" :key="day.dateStr" 
+                                    class="schedule-board__day min-w-[80px] p-2 bg-gray-100 text-gray-700 z-20"
+                                    :class="{'bg-blue-50 text-medical-dark': day.isToday, 'text-red-500': day.isWeekend}">
+                                    <div class="font-bold">{{ day.dateNum }}</div>
+                                    <div class="text-xs font-normal">{{ day.dayOfWeek }}</div>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template v-for="(group, groupName) in groupedDoctors" :key="groupName">
+                                <!-- Group Header -->
+                                <tr>
+                                    <th :colspan="calendarDays.length + 1" class="group-row-title schedule-group-row p-2 text-center text-base font-extrabold sticky left-0 z-10 border-r-0 tracking-wide" :style="scheduleGroupHeaderStyle">
+                                        {{ getGroupName(groupName) }} ({{ group.length }}人)
+                                    </th>
+                                </tr>
+                                <!-- Doctor Rows -->
+                                <tr v-for="doc in group" :key="doc.id" class="schedule-doctor-row hover:bg-gray-50 transition-colors">
+                                    <th class="schedule-doctor-cell text-left font-medium text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#e5e7eb]"
+                                        :class="compactMode ? 'p-1 w-[78px] max-w-[78px]' : 'p-1.5 w-[92px] max-w-[92px]'">
+                                        <div class="schedule-doctor-cell__content flex flex-col leading-tight">
+                                            <span class="truncate" :style="scheduleDoctorNameStyle">{{ doc.name }}</span>
+                                            <span class="text-gray-500 font-normal truncate" :style="scheduleDoctorTitleStyle">{{ doc.title }}</span>
+                                        </div>
+                                    </th>
+                                    
+                                    <td v-for="day in calendarDays" :key="day.dateStr" 
+                                        class="schedule-grid-cell p-1 relative cursor-pointer transition-colors"
+                                        :class="[
+                                            compactMode ? 'h-11 min-w-[72px]' : 'h-16 min-w-[84px]',
+                                            {'bg-gray-50/50': day.isWeekend, 'hover:bg-gray-100': true}
+                                        ]"
+                                        @click.stop="handleScheduleCellClick(doc, day, $event)">
+                                        
+                                        <!-- Shift Display -->
+                                        <template v-for="shifts in [getMainScheduleShifts(doc.id, day.dateStr)]" :key="'shifts-' + doc.id + '-' + day.dateStr">
+                                            <div v-if="shifts.length" class="w-full h-full flex flex-col gap-1 justify-center">
+                                                <div
+                                                    v-for="shift in shifts"
+                                                    :key="doc.id + '-' + day.dateStr + '-' + shift.type"
+                                                    class="schedule-shift-pill rounded font-semibold px-1 shadow-sm text-center leading-tight truncate"
+                                                    :class="[compactMode ? 'py-0.5' : 'py-1', getScheduleCellShiftClass(shift.type)]"
+                                                    :style="scheduleShiftTextStyle">
+                                                    {{ getScheduleCellShiftName(shift.type) }}
+                                                </div>
+                                            </div>
+                                            <div v-else class="w-full h-full flex items-center justify-center text-xl font-light" :class="canEditData ? 'text-transparent hover:text-gray-300' : 'text-transparent'">+</div>
+                                        </template>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Shift Assignment Popup -->
+                <div v-if="popup.show" 
+                     class="shift-popup fixed p-3 z-50 w-64 transition-opacity"
+                     :style="{ top: popup.y + 'px', left: popup.x + 'px' }"
+                     @click.stop>
+                    <div class="text-xs font-bold text-gray-700 mb-2 border-b pb-1">
+                        {{ popup.docName }} - {{ popup.dateStr }}
+                    </div>
+                    <div class="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+                        <div v-for="group in getAvailableShiftGroups(popup.docCategory, popup.dateStr, popup.mode || 'normal')" :key="group.key">
+                            <div class="text-[11px] font-bold text-gray-500 mb-1">{{ group.title }}</div>
+                            <div
+                                class="flex flex-wrap gap-1.5 pr-1"
+                                :class="group.key === 'custom' ? 'max-h-36 overflow-y-auto border border-gray-200 rounded p-1.5 bg-gray-50/60' : ''">
+                                <button v-for="shift in group.shifts" :key="shift.id"
+                                        @click="assignShift(shift.id)"
+                                        class="text-left px-2 py-1.5 rounded text-xs font-medium hover:opacity-80 transition-colors border-2"
+                                        :class="[getShiftColorClass(shift.id), hasShiftAssigned(popup.docId, popup.dateStr, shift.id) ? 'border-slate-800' : 'border-transparent']">
+                                    {{ shift.name }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-3 pt-2 border-t border-gray-100 flex items-center justify-between">
+                        <span class="text-[11px] text-gray-500">可同日叠加多个班次</span>
+                        <div class="flex items-center gap-2">
+                            <button @click="savePopupAssignments" class="win7-btn !min-h-[28px] !px-3 text-xs">
+                                保存
+                            </button>
+                            <button @click="assignShift(null)" class="win7-btn win7-btn-danger !min-h-[28px] !px-2 text-xs">
+                                清空当天
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Right: Sidebar Area -->
+            <aside class="shrink-0 bg-gray-50 flex flex-col overflow-y-auto border-l border-gray-300" :style="sidebarWidthStyle">
+                <div class="p-4 flex flex-col gap-4 sidebar-stack">
+                    <!-- Date Selector for Sidebar -->
+                    <div class="win7-subpanel p-3">
+                        <label class="sidebar-panel-title block font-bold text-gray-700 mb-2">排班概览日期</label>
+                        <input type="date" v-model="selectedSidebarDate" class="win7-input w-full p-2 text-sm bg-white">
+                    </div>
+
+
+                    <!-- 1. Today's On-Call Doctors -->
+                    <div class="win7-subpanel">
+                        <div class="win7-modal-header px-3 py-2 rounded-t-lg">
+                            <h3 class="text-lg md:text-xl font-bold text-gray-700 leading-tight">当日排班人员</h3>
+                        </div>
+                        <div class="p-3 bg-white min-h-[150px]">
+                            <div v-if="todayDutyRows.length" class="flex flex-col gap-2">
+                                <div v-for="row in todayDutyRows" :key="row.key" class="duty-summary-row" :class="[(!row.showLabel || !row.label ? 'duty-summary-row--no-label' : ''), (row.density === 'compact' ? 'duty-summary-row--compact' : '')]" :style="getSidebarRowStyle(row)">
+                                    <div v-if="row.showLabel && row.label" class="duty-summary-label" :class="row.density === 'compact' ? 'duty-summary-label--compact' : ''" :style="getSidebarRowLabelStyle(row)">{{ row.label }}</div>
+                                    <div class="duty-summary-content">
+                                        <div class="duty-summary-groups">
+                                            <span v-for="group in row.groups" :key="group.key" class="duty-summary-group" :class="row.density === 'compact' ? 'gap-1' : 'gap-1.5'">
+                                                <span v-if="row.showShiftNames" class="duty-summary-badge duty-summary-badge--strong duty-summary-shift" :class="[('shift-color-' + group.shiftColor), (row.density === 'compact' ? 'duty-summary-badge--compact duty-summary-shift--compact' : '')]">{{ group.shiftName }}</span>
+                                                <span v-if="shouldShowSidebarGroupCount(row, group)" class="duty-summary-badge duty-summary-badge--muted duty-summary-count" :class="row.density === 'compact' ? 'duty-summary-badge--compact duty-summary-count--compact' : ''">{{ getSidebarGroupCountText(group) }}</span>
+                                                <span class="duty-summary-names" :class="row.density === 'compact' ? 'duty-summary-names--compact' : ''">
+                                                    <template v-for="(member, memberIndex) in group.members" :key="group.key + '-member-' + memberIndex">
+                                                        <span class="duty-summary-member" :class="row.density === 'compact' ? 'duty-summary-member--compact' : ''">
+                                                            <span v-if="shouldShowSidebarMemberTitleBadge(row, member)" class="duty-summary-badge duty-summary-badge--soft duty-summary-title-badge" :class="row.density === 'compact' ? 'duty-summary-badge--compact duty-summary-title-badge--compact' : ''">{{ member.title }}</span>
+                                                            <span class="duty-summary-member-name">{{ getSidebarMemberDisplayText(row, member) }}</span>
+                                                            <span v-if="shouldShowSidebarMemberPhoneBadge(row, member)" class="duty-summary-badge duty-summary-badge--subtle duty-summary-phone-badge" :class="row.density === 'compact' ? 'duty-summary-badge--compact duty-summary-phone-badge--compact' : ''">{{ member.phoneText }}</span>
+                                                        </span>
+                                                        <span v-if="memberIndex < group.members.length - 1" class="duty-summary-member-separator">、</span>
+                                                    </template>
+                                                </span>
+                                            </span>
+                                            <span v-if="row.groups.length === 0" class="duty-summary-empty" :class="row.density === 'compact' ? 'duty-summary-empty--compact' : ''">
+                                                <span class="duty-summary-badge duty-summary-badge--subtle duty-summary-empty-badge" :class="row.density === 'compact' ? 'duty-summary-badge--compact' : ''">空安排</span>
+                                                <span class="duty-summary-empty-text">{{ getSidebarRowEmptyText(row) }}</span>
+                                            </span>
+                                        </div>
+                                        <div v-if="getSidebarRowPhones(row)" class="duty-summary-phone" :class="row.density === 'compact' ? 'duty-summary-phone--compact' : ''">电话：{{ getSidebarRowPhones(row) }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else class="text-sm text-gray-400 text-center py-4">
+                                当日暂无排班人员
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2. Teaching Notice / Department Notice -->
+                    <div class="win7-subpanel flex flex-col notice-panel notice-panel--teaching">
+                        <div class="win7-modal-header notice-panel__header notice-panel__header--teaching px-3 py-2 rounded-t-lg flex items-center justify-between gap-2">
+                            <div class="notice-panel__title-wrap flex items-center gap-2">
+                                <span class="notice-panel__title-accent notice-panel__title-accent--teaching" aria-hidden="true"></span>
+                                <div class="notice-panel__title-stack">
+                                    <div class="notice-panel__title-row">
+                                        <h3 class="notice-panel__title text-sm font-bold text-gray-700">科室公告</h3>
+                                        <span class="notice-panel__tag notice-panel__tag--teaching">部门信息</span>
+                                    </div>
+                                    <p class="notice-panel__subtitle">用于同步科室安排、出诊变更与值班提醒</p>
+                                </div>
+                            </div>
+                            <div class="notice-panel__actions">
+                                <button @click="openNoticeHistory('teaching')" class="win7-btn notice-panel__action-btn notice-panel__action-btn--neutral !min-h-[24px] !px-2 text-[11px]" title="历史版本">
+                                    <span class="notice-panel__action-icon" aria-hidden="true">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-3.08-6.79"></path></svg>
+                                    </span>
+                                    <span>历史</span>
+                                </button>
+                                <button @click="copyNotice('teaching')" class="win7-btn notice-panel__action-btn notice-panel__action-btn--neutral !min-h-[24px] !px-2 text-[11px]" title="复制公告">
+                                    <span class="notice-panel__action-icon" aria-hidden="true">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h7a2 2 0 012 2v7a2 2 0 01-2 2h-2m-7 5h7a2 2 0 002-2v-7a2 2 0 00-2-2H8a2 2 0 00-2 2v7a2 2 0 002 2z"></path></svg>
+                                    </span>
+                                    <span>复制</span>
+                                </button>
+                                <button v-if="canEditData" @click="appendNoticeTimestamp('teaching')" class="win7-btn notice-panel__action-btn notice-panel__action-btn--info !min-h-[24px] !px-2 text-[11px]" title="插入时间">
+                                    <span class="notice-panel__action-icon" aria-hidden="true">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10m-12 9h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v11a2 2 0 002 2z"></path></svg>
+                                    </span>
+                                    <span>时间</span>
+                                </button>
+                                <button v-if="canEditData" @click="clearNotice('teaching', '科室公告')" class="win7-btn win7-btn-danger notice-panel__action-btn notice-panel__action-btn--danger !min-h-[24px] !px-2 text-[11px]" title="清空公告">
+                                    <span class="notice-panel__action-icon" aria-hidden="true">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 7h12m-9 0V5a1 1 0 011-1h4a1 1 0 011 1v2m-8 0l1 12h6l1-12"></path></svg>
+                                    </span>
+                                    <span>清空</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="notice-editor-wrapper notice-editor-wrapper--teaching">
+                            <div id="teaching-toolbar" class="notice-editor-toolbar notice-editor-toolbar--teaching" v-show="canEditData">
+                                <span class="ql-formats">
+                                    <select class="ql-size">
+                                        <option value="small"></option>
+                                        <option selected></option>
+                                        <option value="large"></option>
+                                        <option value="huge"></option>
+                                    </select>
+                                </span>
+                                <span class="ql-formats">
+                                    <button class="ql-bold"></button>
+                                    <button class="ql-italic"></button>
+                                    <button class="ql-underline"></button>
+                                    <button class="ql-strike"></button>
+                                    <select class="ql-color"></select>
+                                    <select class="ql-background"></select>
+                                </span>
+                                <span class="ql-formats">
+                                    <button class="ql-list" value="ordered"></button>
+                                    <button class="ql-list" value="bullet"></button>
+                                    <button @click="insertTable('teaching')" title="插入3x3表格" class="win7-btn !min-h-0 !p-1 !border-none !bg-transparent opacity-60 hover:opacity-100">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                    </button>
+                                </span>
+                                <span class="ql-formats">
+                                    <button class="ql-clean"></button>
+                                </span>
+                            </div>
+                            <button
+                                v-if="isNoticeEmpty('teaching')"
+                                type="button"
+                                class="notice-editor-empty-state notice-editor-empty-state--teaching"
+                                :class="canEditData ? 'notice-editor-empty-state--interactive' : 'notice-editor-empty-state--readonly'"
+                                :disabled="!canEditData"
+                                @click="focusNoticeEditor('teaching')">
+                                <div class="notice-editor-empty-state__icon">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h8m-8 4h6M6 4h12a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2z"></path></svg>
+                                </div>
+                                <div class="notice-editor-empty-state__title">{{ canEditData ? '开始填写科室公告' : '当前暂无科室公告' }}</div>
+                                <div class="notice-editor-empty-state__desc">{{ canEditData ? '可录入排班说明、出诊调整和重点通知，点击此处即可开始编辑' : '公告内容发布后将在此处显示' }}</div>
+                            </button>
+                            <div id="teaching-editor" class="notice-editor-content" :style="getNoticeEditorStyle('teaching')"></div>
+                        </div>
+                        <div class="notice-footer-info notice-footer-info--teaching rounded-b-lg">
+                            <div class="notice-footer-info__meta">
+                                <span class="notice-footer-info__status">{{ canEditData ? '支持富文本、拖拽拉伸' : '当前为只读查看' }}</span>
+                                <span class="notice-footer-info__updated">{{ getNoticeLastUpdatedLabel('teaching') }}</span>
+                                <span v-if="hasDraft('teaching')" class="draft-badge cursor-pointer hover:bg-amber-200" @click="restoreDraft('teaching')" title="点击恢复最新草稿">有草稿</span>
+                            </div>
+                            <span class="notice-footer-info__count" :class="getNoticeTextLength('teaching') > 2000 ? 'notice-footer-info__count--danger' : (getNoticeTextLength('teaching') > 1600 ? 'notice-footer-info__count--warning' : '')">
+                                {{ getNoticeTextLength('teaching') }} / 2000 字
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- 3. Special Notes -->
+                    <div class="win7-subpanel flex flex-col notice-panel notice-panel--special">
+                        <div class="win7-modal-header notice-panel__header notice-panel__header--special px-3 py-2 rounded-t-lg flex items-center justify-between gap-2">
+                            <div class="notice-panel__title-wrap flex items-center gap-2">
+                                <span class="notice-panel__title-icon notice-panel__title-icon--special" aria-hidden="true">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v5m0 3h.01M10.29 3.86l-8 14A1 1 0 003.16 19h17.68a1 1 0 00.87-1.5l-8-14a1 1 0 00-1.74 0z"></path></svg>
+                                </span>
+                                <div class="notice-panel__title-stack">
+                                    <div class="notice-panel__title-row">
+                                        <h3 class="notice-panel__title text-sm font-bold text-gray-700">特别备注</h3>
+                                        <span class="notice-panel__tag notice-panel__tag--special">提醒</span>
+                                    </div>
+                                    <p class="notice-panel__subtitle">用于放置临时通知、注意事项与风险提示</p>
+                                </div>
+                            </div>
+                            <div class="notice-panel__actions">
+                                <button @click="openNoticeHistory('special')" class="win7-btn notice-panel__action-btn notice-panel__action-btn--neutral !min-h-[24px] !px-2 text-[11px]" title="历史版本">
+                                    <span class="notice-panel__action-icon" aria-hidden="true">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-3.08-6.79"></path></svg>
+                                    </span>
+                                    <span>历史</span>
+                                </button>
+                                <button @click="copyNotice('special')" class="win7-btn notice-panel__action-btn notice-panel__action-btn--neutral !min-h-[24px] !px-2 text-[11px]" title="复制备注">
+                                    <span class="notice-panel__action-icon" aria-hidden="true">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V5a2 2 0 012-2h7a2 2 0 012 2v7a2 2 0 01-2 2h-2m-7 5h7a2 2 0 002-2v-7a2 2 0 00-2-2H8a2 2 0 00-2 2v7a2 2 0 002 2z"></path></svg>
+                                    </span>
+                                    <span>复制</span>
+                                </button>
+                                <button v-if="canEditData" @click="appendNoticeTimestamp('special')" class="win7-btn notice-panel__action-btn notice-panel__action-btn--info !min-h-[24px] !px-2 text-[11px]" title="插入时间">
+                                    <span class="notice-panel__action-icon" aria-hidden="true">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10m-12 9h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v11a2 2 0 002 2z"></path></svg>
+                                    </span>
+                                    <span>时间</span>
+                                </button>
+                                <button v-if="canEditData" @click="clearNotice('special', '特别备注')" class="win7-btn win7-btn-danger notice-panel__action-btn notice-panel__action-btn--danger !min-h-[24px] !px-2 text-[11px]" title="清空备注">
+                                    <span class="notice-panel__action-icon" aria-hidden="true">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 7h12m-9 0V5a1 1 0 011-1h4a1 1 0 011 1v2m-8 0l1 12h6l1-12"></path></svg>
+                                    </span>
+                                    <span>清空</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="notice-editor-wrapper notice-editor-wrapper--special">
+                            <div id="special-toolbar" class="notice-editor-toolbar notice-editor-toolbar--special" v-show="canEditData">
+                                <span class="ql-formats">
+                                    <select class="ql-size">
+                                        <option value="small"></option>
+                                        <option selected></option>
+                                        <option value="large"></option>
+                                        <option value="huge"></option>
+                                    </select>
+                                </span>
+                                <span class="ql-formats">
+                                    <button class="ql-bold"></button>
+                                    <button class="ql-italic"></button>
+                                    <button class="ql-underline"></button>
+                                    <button class="ql-strike"></button>
+                                    <select class="ql-color"></select>
+                                    <select class="ql-background"></select>
+                                </span>
+                                <span class="ql-formats">
+                                    <button class="ql-list" value="ordered"></button>
+                                    <button class="ql-list" value="bullet"></button>
+                                    <button @click="insertTable('special')" title="插入3x3表格" class="win7-btn !min-h-0 !p-1 !border-none !bg-transparent opacity-60 hover:opacity-100">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M3 14h18m-9-4v8m-7 0h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                    </button>
+                                </span>
+                                <span class="ql-formats">
+                                    <button class="ql-clean"></button>
+                                </span>
+                            </div>
+                            <button
+                                v-if="isNoticeEmpty('special')"
+                                type="button"
+                                class="notice-editor-empty-state notice-editor-empty-state--special"
+                                :class="canEditData ? 'notice-editor-empty-state--interactive' : 'notice-editor-empty-state--readonly'"
+                                :disabled="!canEditData"
+                                @click="focusNoticeEditor('special')">
+                                <div class="notice-editor-empty-state__icon">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.25 8.25h1.5v5.25h-1.5zm0 6.75h1.5v1.5h-1.5z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.29 3.86l-7.5 13A1 1 0 003.66 18h16.68a1 1 0 00.87-1.14l-7.5-13a1 1 0 00-1.74 0z"></path></svg>
+                                </div>
+                                <div class="notice-editor-empty-state__title">{{ canEditData ? '开始填写特别备注' : '当前暂无特别备注' }}</div>
+                                <div class="notice-editor-empty-state__desc">{{ canEditData ? '可记录临时提醒、风险点或特别安排，点击此处即可开始编辑' : '有备注信息时会在此处展示' }}</div>
+                            </button>
+                            <div id="special-editor" class="notice-editor-content" :style="getNoticeEditorStyle('special')"></div>
+                        </div>
+                        <div class="notice-footer-info notice-footer-info--special rounded-b-lg">
+                            <div class="notice-footer-info__meta">
+                                <span class="notice-footer-info__status">{{ canEditData ? '支持富文本、拖拽拉伸' : '当前为只读查看' }}</span>
+                                <span class="notice-footer-info__updated">{{ getNoticeLastUpdatedLabel('special') }}</span>
+                                <span v-if="hasDraft('special')" class="draft-badge cursor-pointer hover:bg-amber-200" @click="restoreDraft('special')" title="点击恢复最新草稿">有草稿</span>
+                            </div>
+                            <span class="notice-footer-info__count" :class="getNoticeTextLength('special') > 2000 ? 'notice-footer-info__count--danger' : (getNoticeTextLength('special') > 1600 ? 'notice-footer-info__count--warning' : '')">
+                                {{ getNoticeTextLength('special') }} / 2000 字
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <!-- Department Manager Modal -->
+        <div v-if="showDepartmentManager" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[115]">
+            <div class="win7-modal-card w-full max-w-4xl max-h-[90vh] flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex justify-between items-center rounded-t-lg">
+                    <h3 class="text-lg font-bold text-gray-700">科室表单管理</h3>
+                    <button @click="closeDepartmentManager" class="text-gray-400 hover:text-red-500 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 overflow-auto">
+                    <div class="space-y-4">
+                        <div class="soft-info p-3 text-sm text-gray-600">
+                            当前科室：<span class="font-semibold text-gray-800">{{ currentDepartment ? currentDepartment.name : '未选择' }}</span>
+                        </div>
+                        <div class="border rounded-lg overflow-hidden">
+                            <div class="px-4 py-3 bg-gray-50 text-sm font-semibold text-gray-700">已存在科室</div>
+                            <div class="divide-y divide-gray-100 max-h-[320px] overflow-auto">
+                                <div v-for="department in departments" :key="'dept-' + department.id" class="px-4 py-3 flex items-center justify-between gap-3">
+                                    <div class="min-w-0 flex-1">
+                                        <div class="flex items-center gap-2">
+                                            <span class="text-xs text-gray-400 w-10 shrink-0">#{{ department.order }}</span>
+                                            <input
+                                                v-model.trim="departmentDraftNames[department.id]"
+                                                class="win7-input p-2 w-full text-sm bg-white"
+                                                placeholder="科室名称">
+                                        </div>
+                                        <div class="text-xs text-gray-500">人员 {{ department.doctorCount }} 人 / 班次 {{ department.shiftCount }} 个 / 已排班 {{ department.scheduledDayCount }} 天</div>
+                                    </div>
+                                    <div class="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                                        <button
+                                            @click="moveDepartment(department.id, 'up')"
+                                            class="win7-btn !min-h-[28px] !px-2"
+                                            :disabled="!canMoveDepartmentUp(department.id) || isSubmittingDepartment"
+                                            :class="(!canMoveDepartmentUp(department.id) || isSubmittingDepartment) ? 'opacity-40 cursor-not-allowed' : ''"
+                                            title="上移科室">
+                                            ↑
+                                        </button>
+                                        <button
+                                            @click="moveDepartment(department.id, 'down')"
+                                            class="win7-btn !min-h-[28px] !px-2"
+                                            :disabled="!canMoveDepartmentDown(department.id) || isSubmittingDepartment"
+                                            :class="(!canMoveDepartmentDown(department.id) || isSubmittingDepartment) ? 'opacity-40 cursor-not-allowed' : ''"
+                                            title="下移科室">
+                                            ↓
+                                        </button>
+                                        <button
+                                            @click="renameDepartment(department.id)"
+                                            class="win7-btn !min-h-[28px] !px-2"
+                                            :disabled="isSubmittingDepartment"
+                                            :class="isSubmittingDepartment ? 'opacity-40 cursor-not-allowed' : ''"
+                                            title="保存科室名称">
+                                            保存
+                                        </button>
+                                        <button @click="switchDepartment(department.id)" class="win7-btn !min-h-[28px] !px-2" :class="department.id === currentDepartmentId ? 'win7-btn-primary' : ''">
+                                            {{ department.id === currentDepartmentId ? '当前科室' : '切换' }}
+                                        </button>
+                                        <button
+                                            @click="deleteDepartment(department.id)"
+                                            class="win7-btn win7-btn-danger !min-h-[28px] !px-2"
+                                            :disabled="!canDeleteDepartment(department.id) || isSubmittingDepartment"
+                                            :class="(!canDeleteDepartment(department.id) || isSubmittingDepartment) ? 'opacity-40 cursor-not-allowed' : ''"
+                                            :title="!canDeleteDepartment(department.id) ? '系统至少需要保留一个科室' : '删除科室'">
+                                            删除
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="space-y-5">
+                        <div class="border rounded-lg p-4 space-y-3">
+                            <h4 class="font-semibold text-gray-700">新建空白科室</h4>
+                            <input v-model.trim="newDepartmentName" class="win7-input p-2 w-full text-sm" placeholder="例如：心内科二病区">
+                            <div class="text-xs text-gray-500">新建后自动带默认班次设置，人员与排班为空，方便从零配置。</div>
+                            <button @click="createDepartment('blank')" class="win7-btn win7-btn-primary" :disabled="isSubmittingDepartment">
+                                {{ isSubmittingDepartment ? '提交中...' : '创建空白科室' }}
+                            </button>
+                        </div>
+                        <div class="border rounded-lg p-4 space-y-3">
+                            <h4 class="font-semibold text-gray-700">复制当前科室结构</h4>
+                            <input v-model.trim="duplicateDepartmentName" class="win7-input p-2 w-full text-sm" placeholder="例如：心内科A组-副本">
+                            <div class="text-xs text-gray-500">复制当前科室的人员、班次、公告和界面设置，但不复制具体排班数据与历史记录。</div>
+                            <button @click="createDepartment('duplicate')" class="win7-btn" :disabled="isSubmittingDepartment || !currentDepartmentId">
+                                {{ isSubmittingDepartment ? '提交中...' : '复制当前科室结构' }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Module Manager Modal -->
+        <div v-if="showModuleManager" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[116]">
+            <div class="win7-modal-card w-full max-w-6xl max-h-[90vh] min-h-0 flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex flex-col gap-4 rounded-t-lg">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-bold text-gray-700">模块管理</h3>
+                        <button @click="closeModuleManager" class="text-gray-400 hover:text-red-500 transition">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                    <!-- Management Navigation Tabs -->
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 pb-1">
+                        <div class="flex flex-wrap items-center">
+                            <button class="px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-600">模块设计</button>
+                            <button @click="closeModuleManager(); openShiftManager()" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">班次设置</button>
+                            <button @click="closeModuleManager(); openAutoScheduleModal()" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">批量排班</button>
+                        </div>
+                        <button v-if="canEditData" @click="showDisplaySettings = true" class="win7-btn !min-h-[30px] !px-3">
+                            字体与间距
+                        </button>
+                    </div>
+                </div>
+                <div class="p-6 flex-1 min-h-0 overflow-hidden flex flex-col gap-4">
+                    <div class="soft-info p-3 text-sm text-gray-600 shrink-0">
+                        模块创建后会自动接入人员类别、筛选条件、班次适用类别、批量排班分组和按分组清空等现有功能。
+                    </div>
+
+                    <div class="border rounded-lg shrink-0">
+                        <div class="flex items-center justify-between gap-4 flex-wrap">
+                            <div class="p-4">
+                                <h4 class="font-semibold text-gray-700">新增自定义模块</h4>
+                                <div class="text-xs text-gray-500 mt-1">适合按科室需要新增四线班、专病门诊班、会诊班等结构化排班模块。</div>
+                            </div>
+                            <div class="px-4">
+                                <button @click="toggleNewModuleForm" class="win7-btn">
+                                    {{ showNewModuleForm ? '收起新增面板' : '展开新增面板' }}
+                                </button>
+                            </div>
+                        </div>
+                        <div v-show="showNewModuleForm" class="px-4 pb-4 space-y-4">
+                        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">人员类别名称</label>
+                                <input v-model.trim="newModule.doctorLabel" class="win7-input p-2 w-full text-sm" placeholder="例如：四线医生">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">表格名称</label>
+                                <input v-model.trim="newModule.groupName" class="win7-input p-2 w-full text-sm" placeholder="例如：四线班">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">清空按钮名称</label>
+                                <input v-model.trim="newModule.clearLabel" class="win7-input p-2 w-full text-sm" placeholder="留空时自动生成">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">右侧提取规则</label>
+                                <select v-model="newModule.sidebarMode" class="win7-select p-2 w-full text-sm bg-white">
+                                    <option v-for="option in sidebarModeOptions" :key="'new-module-sidebar-' + option.value" :value="option.value">
+                                        {{ option.label }}
+                                    </option>
+                                </select>
+                            </div>
+                            <template v-if="shouldShowModuleSidebarAdvancedSettings(newModule)">
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">右侧显示名称</label>
+                                <input v-model.trim="newModule.sidebarLabel" class="win7-input p-2 w-full text-sm" placeholder="留空默认使用表格名称">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">右侧排序</label>
+                                <input v-model.number="newModule.sidebarOrder" type="number" min="1" max="999" class="win7-input p-2 w-full text-sm" placeholder="例如：60">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">右侧标题高亮</label>
+                                <select v-model="newModule.sidebarAccentColor" class="win7-select p-2 w-full text-sm bg-white">
+                                    <option v-for="option in sidebarAccentOptions" :key="'new-module-accent-' + option.value" :value="option.value">
+                                        {{ option.label }}
+                                    </option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">右侧分组方式</label>
+                                <select v-model="newModule.sidebarGroupMode" class="win7-select p-2 w-full text-sm bg-white">
+                                    <option v-for="option in sidebarGroupModeOptions" :key="'new-module-group-mode-' + option.value" :value="option.value">
+                                        {{ option.label }}
+                                    </option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">右侧显示密度</label>
+                                <select v-model="newModule.sidebarDensity" class="win7-select p-2 w-full text-sm bg-white">
+                                    <option v-for="option in sidebarDensityOptions" :key="'new-module-density-' + option.value" :value="option.value">
+                                        {{ option.label }}
+                                    </option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">职称显示方式</label>
+                                <select v-model="newModule.sidebarTitleMode" class="win7-select p-2 w-full text-sm bg-white">
+                                    <option v-for="option in sidebarTitleModeOptions" :key="'new-module-title-mode-' + option.value" :value="option.value">
+                                        {{ option.label }}
+                                    </option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 mb-1">右侧人数标记</label>
+                                <select v-model="newModule.sidebarCountMode" class="win7-select p-2 w-full text-sm bg-white">
+                                    <option v-for="option in sidebarCountModeOptions" :key="'new-module-count-mode-' + option.value" :value="option.value">
+                                        {{ option.label }}
+                                    </option>
+                                </select>
+                            </div>
+                            </template>
+                        </div>
+                        <div class="soft-info p-3 text-xs text-gray-600">
+                            {{ getModuleSidebarInactiveHint(newModule) }}
+                        </div>
+                        <div v-if="shouldShowModuleSidebarKeywordEditor(newModule)">
+                            <label class="block text-xs text-gray-500 mb-1">匹配关键字</label>
+                            <textarea v-model.trim="newModule.sidebarKeywordsText" class="win7-input p-2 w-full text-sm min-h-[72px]" placeholder="多个关键字可用逗号、分号、竖线或换行分隔，例如：夜班, 急诊, 留守"></textarea>
+                        </div>
+                        <div v-if="shouldShowModuleSidebarWhitelistEditor(newModule)" class="space-y-2">
+                            <div class="text-xs text-gray-500">指定班次白名单</div>
+                            <div class="text-xs text-gray-400">新模块刚创建时还没有专属班次，建议先创建模块，再到下方模块列表里继续勾选指定班次。</div>
+                        </div>
+                        <div class="flex flex-wrap gap-4">
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" v-model="newModule.allowFixedWeekdays">
+                                <span>允许固定周几班次</span>
+                            </label>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" v-model="newModule.allowMultiAssign">
+                                <span>允许同日叠加多个班次</span>
+                            </label>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" v-model="newModule.enabled">
+                                <span>创建后立即启用</span>
+                            </label>
+                            <template v-if="shouldShowModuleSidebarAdvancedSettings(newModule)">
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" v-model="newModule.sidebarShowPhone">
+                                <span>右侧显示电话</span>
+                            </label>
+                            <div v-if="shouldShowModuleSidebarPhoneModeEditor(newModule)" class="min-w-[220px]">
+                                <label class="block text-xs text-gray-500 mb-1">电话显示方式</label>
+                                <select v-model="newModule.sidebarPhoneMode" class="win7-select p-2 w-full text-sm bg-white">
+                                    <option v-for="option in sidebarPhoneModeOptions" :key="'new-module-phone-mode-' + option.value" :value="option.value">
+                                        {{ option.label }}
+                                    </option>
+                                </select>
+                            </div>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" v-model="newModule.sidebarShowLabel">
+                                <span>右侧显示标题</span>
+                            </label>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" v-model="newModule.sidebarShowTitle">
+                                <span>右侧显示职称</span>
+                            </label>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" v-model="newModule.sidebarShowShiftName">
+                                <span>右侧显示班次名</span>
+                            </label>
+                            <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" v-model="newModule.sidebarShowIfEmpty">
+                                <span>无排班时也展示空行</span>
+                            </label>
+                            </template>
+                        </div>
+                        <div v-if="newModuleSidebarValidationMessages.length" class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 space-y-1">
+                            <div v-for="message in newModuleSidebarValidationMessages" :key="'new-module-validation-' + message">{{ message }}</div>
+                        </div>
+                        <div class="flex justify-end">
+                            <button @click="createModule" class="win7-btn win7-btn-primary" :disabled="!canCreateNewModule" :class="!canCreateNewModule ? 'opacity-50 cursor-not-allowed' : ''" :title="!canCreateNewModule ? (newModuleSidebarValidationMessages[0] || '请先补全必填项') : '新增模块'">新增模块</button>
+                        </div>
+                        </div>
+                    </div>
+
+                    <div class="border rounded-lg overflow-hidden flex-1 min-h-0">
+                        <div class="px-4 py-3 bg-gray-50 flex items-center justify-between gap-4 flex-wrap">
+                            <div>
+                                <div class="font-semibold text-gray-700">当前模块列表</div>
+                                <div class="text-xs text-gray-500 mt-1">默认模块可改名、排序或停用，但不能删除；自定义模块删除时会同步清理该模块下的人员、相关排班，以及仅属于该模块的班次。</div>
+                            </div>
+                            <div class="module-manager-toolbar">
+                                <div class="module-manager-toolbar-field">
+                                    <label class="block text-xs text-gray-500 mb-1">模块下拉总览</label>
+                                    <select v-model="moduleManagerSelectedModuleId" class="win7-select p-2 min-w-[260px] text-sm bg-white">
+                                        <option value="all">全部模块（{{ allModulesSorted.length }}）</option>
+                                        <option v-for="module in allModulesSorted" :key="'module-filter-' + module.id" :value="module.id">
+                                            {{ module.doctorLabel }} / {{ module.groupName }}
+                                        </option>
+                                    </select>
+                                </div>
+                                <div class="text-xs text-gray-500">显示 {{ moduleManagerVisibleModules.length }} / {{ allModulesSorted.length }} 个模块</div>
+                            </div>
+                        </div>
+                        <div class="module-manager-list-scroll">
+                            <table class="w-full text-left border-collapse text-sm">
+                                <thead>
+                                    <tr class="bg-gray-100">
+                                        <th class="p-3 font-semibold text-gray-600 border-b w-24 text-center">排序</th>
+                                        <th class="p-3 font-semibold text-gray-600 border-b min-w-[180px]">人员类别</th>
+                                        <th class="p-3 font-semibold text-gray-600 border-b min-w-[180px]">表格名称</th>
+                                        <th class="p-3 font-semibold text-gray-600 border-b min-w-[200px]">清空名称</th>
+                                        <th class="p-3 font-semibold text-gray-600 border-b min-w-[220px]">规则</th>
+                                        <th class="p-3 font-semibold text-gray-600 border-b min-w-[120px]">使用情况</th>
+                                        <th class="p-3 font-semibold text-gray-600 border-b w-48 text-center">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="module in moduleManagerVisibleModules" :key="'module-row-' + module.id" class="hover:bg-gray-50 border-b last:border-0 align-top" :class="moduleManagerSelectedModuleId === module.id ? 'bg-blue-50/70' : ''">
+                                        <td class="p-3 text-center">
+                                            <div class="flex items-center justify-center gap-1">
+                                                <button
+                                                    @click="moveModule(module.id, 'up')"
+                                                    :disabled="!canMoveModuleUp(module.id)"
+                                                    class="win7-btn !min-h-[28px] !px-2"
+                                                    :class="!canMoveModuleUp(module.id) ? 'opacity-40 cursor-not-allowed' : ''"
+                                                    title="上移">
+                                                    ↑
+                                                </button>
+                                                <button
+                                                    @click="moveModule(module.id, 'down')"
+                                                    :disabled="!canMoveModuleDown(module.id)"
+                                                    class="win7-btn !min-h-[28px] !px-2"
+                                                    :class="!canMoveModuleDown(module.id) ? 'opacity-40 cursor-not-allowed' : ''"
+                                                    title="下移">
+                                                    ↓
+                                                </button>
+                                            </div>
+                                            <div class="text-xs text-gray-400 mt-2">第 {{ module.order }} 位</div>
+                                        </td>
+                                        <td class="p-3">
+                                            <input
+                                                v-model.trim="module.doctorLabel"
+                                                @blur="normalizeModuleEditableFields(module.id)"
+                                                class="win7-input p-2 w-full text-sm bg-white"
+                                                placeholder="人员类别名称">
+                                            <div class="text-xs text-gray-400 mt-2">{{ module.id }}</div>
+                                        </td>
+                                        <td class="p-3">
+                                            <input
+                                                v-model.trim="module.groupName"
+                                                @blur="normalizeModuleEditableFields(module.id)"
+                                                class="win7-input p-2 w-full text-sm bg-white"
+                                                placeholder="排班表标题">
+                                        </td>
+                                        <td class="p-3">
+                                            <input
+                                                v-model.trim="module.clearLabel"
+                                                @blur="normalizeModuleEditableFields(module.id)"
+                                                class="win7-input p-2 w-full text-sm bg-white"
+                                                placeholder="清空菜单名称">
+                                        </td>
+                                        <td class="p-3">
+                                            <div class="flex flex-col gap-2">
+                                                <div class="rules-summary" @click="toggleModuleRules(module.id)">
+                                                    <span class="font-bold text-gray-700">配置规则</span>
+                                                    <i class="fas" :class="expandedModuleRules.has(module.id) ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
+                                                </div>
+                                                
+                                                <div v-if="expandedModuleRules.has(module.id)" class="flex flex-col gap-2 mt-2 p-3 bg-gray-50 border border-dashed border-gray-300 rounded">
+                                                    <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                                        <input type="checkbox" v-model="module.allowFixedWeekdays">
+                                                        <span>允许固定周几班次</span>
+                                                    </label>
+                                                    <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                                        <input type="checkbox" v-model="module.allowMultiAssign">
+                                                        <span>允许同日叠加多个班次</span>
+                                                    </label>
+                                                    <div>
+                                                        <div class="text-xs text-gray-500 mb-1">右侧提取规则</div>
+                                                        <select v-model="module.sidebarMode" class="win7-select p-2 w-full text-sm bg-white">
+                                                            <option v-for="option in sidebarModeOptions" :key="'module-sidebar-' + module.id + '-' + option.value" :value="option.value">
+                                                                {{ option.label }}
+                                                            </option>
+                                                        </select>
+                                                    </div>
+                                                    <div class="soft-info p-2 text-xs text-gray-600">
+                                                        {{ getModuleSidebarInactiveHint(module) }}
+                                                    </div>
+                                                    <template v-if="shouldShowModuleSidebarAdvancedSettings(module)">
+                                                    <div>
+                                                        <div class="text-xs text-gray-500 mb-1">右侧显示名称</div>
+                                                        <input v-model.trim="module.sidebarLabel" class="win7-input p-2 w-full text-sm bg-white" placeholder="留空默认使用表格名称">
+                                                    </div>
+                                                    <div>
+                                                        <div class="text-xs text-gray-500 mb-1">右侧排序</div>
+                                                        <input v-model.number="module.sidebarOrder" type="number" min="1" max="999" class="win7-input p-2 w-full text-sm bg-white">
+                                                    </div>
+                                                    <div>
+                                                        <div class="text-xs text-gray-500 mb-1">右侧标题高亮</div>
+                                                        <select v-model="module.sidebarAccentColor" class="win7-select p-2 w-full text-sm bg-white">
+                                                            <option v-for="option in sidebarAccentOptions" :key="'module-accent-' + module.id + '-' + option.value" :value="option.value">
+                                                                {{ option.label }}
+                                                            </option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <div class="text-xs text-gray-500 mb-1">右侧分组方式</div>
+                                                        <select v-model="module.sidebarGroupMode" class="win7-select p-2 w-full text-sm bg-white">
+                                                            <option v-for="option in sidebarGroupModeOptions" :key="'module-group-mode-' + module.id + '-' + option.value" :value="option.value">
+                                                                {{ option.label }}
+                                                            </option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <div class="text-xs text-gray-500 mb-1">右侧显示密度</div>
+                                                        <select v-model="module.sidebarDensity" class="win7-select p-2 w-full text-sm bg-white">
+                                                            <option v-for="option in sidebarDensityOptions" :key="'module-density-' + module.id + '-' + option.value" :value="option.value">
+                                                                {{ option.label }}
+                                                            </option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <div class="text-xs text-gray-500 mb-1">职称显示方式</div>
+                                                        <select v-model="module.sidebarTitleMode" class="win7-select p-2 w-full text-sm bg-white">
+                                                            <option v-for="option in sidebarTitleModeOptions" :key="'module-title-mode-' + module.id + '-' + option.value" :value="option.value">
+                                                                {{ option.label }}
+                                                            </option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <div class="text-xs text-gray-500 mb-1">右侧人数标记</div>
+                                                        <select v-model="module.sidebarCountMode" class="win7-select p-2 w-full text-sm bg-white">
+                                                            <option v-for="option in sidebarCountModeOptions" :key="'module-count-mode-' + module.id + '-' + option.value" :value="option.value">
+                                                                {{ option.label }}
+                                                            </option>
+                                                        </select>
+                                                    </div>
+                                                    <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                                        <input type="checkbox" v-model="module.sidebarShowPhone">
+                                                        <span>右侧显示电话</span>
+                                                    </label>
+                                                    <div v-if="shouldShowModuleSidebarPhoneModeEditor(module)">
+                                                        <div class="text-xs text-gray-500 mb-1">电话显示方式</div>
+                                                        <select v-model="module.sidebarPhoneMode" class="win7-select p-2 w-full text-sm bg-white">
+                                                            <option v-for="option in sidebarPhoneModeOptions" :key="'module-phone-mode-' + module.id + '-' + option.value" :value="option.value">
+                                                                {{ option.label }}
+                                                            </option>
+                                                        </select>
+                                                    </div>
+                                                    <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                                        <input type="checkbox" v-model="module.sidebarShowLabel">
+                                                        <span>右侧显示标题</span>
+                                                    </label>
+                                                    <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                                        <input type="checkbox" v-model="module.sidebarShowTitle">
+                                                        <span>右侧显示职称</span>
+                                                    </label>
+                                                    <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                                        <input type="checkbox" v-model="module.sidebarShowShiftName">
+                                                        <span>右侧显示班次名</span>
+                                                    </label>
+                                                    <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                                                        <input type="checkbox" v-model="module.sidebarShowIfEmpty">
+                                                        <span>无排班时也展示空行</span>
+                                                    </label>
+                                                    </template>
+                                                    <div v-if="shouldShowModuleSidebarKeywordEditor(module)">
+                                                        <div class="text-xs text-gray-500 mb-1">匹配关键字</div>
+                                                        <textarea v-model.trim="module.sidebarKeywordsText" class="win7-input p-2 w-full text-sm min-h-[72px]" placeholder="多个关键字可用逗号、分号、竖线或换行分隔"></textarea>
+                                                    </div>
+                                                    <div v-if="shouldShowModuleSidebarWhitelistEditor(module)">
+                                                        <div class="text-xs text-gray-500 mb-1">指定班次白名单</div>
+                                                        <div class="max-h-[120px] overflow-y-auto border border-gray-300 rounded bg-white p-2 space-y-1">
+                                                            <label
+                                                                v-for="shift in getSidebarRuleTargetShifts(module.id)"
+                                                                :key="'module-sidebar-shift-' + module.id + '-' + shift.id"
+                                                                class="flex items-center gap-2 text-sm text-gray-700">
+                                                                <input type="checkbox" v-model="module.sidebarShiftIds" :value="shift.id">
+                                                                <span>{{ shift.name }}</span>
+                                                            </label>
+                                                            <div v-if="getSidebarRuleTargetShifts(module.id).length === 0" class="text-xs text-gray-400">
+                                                                当前模块还没有可选班次，请先在班次设置中为该模块配置班次。
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div v-if="getModuleSidebarValidationMessages(module).length" class="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 space-y-1">
+                                                        <div v-for="message in getModuleSidebarValidationMessages(module)" :key="'module-validation-' + module.id + '-' + message">{{ message }}</div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div v-if="!expandedModuleRules.has(module.id)" class="text-xs text-gray-500">
+                                                    {{ isModuleSidebarRuleHidden(module) ? '右侧不展示' : (isModuleSidebarRuleDefault(module) ? '默认规则' : '自定义规则') }}
+                                                </div>
+                                                
+                                                <div class="text-xs" :class="module.enabled ? 'text-green-600' : 'text-gray-400'">
+                                                    {{ module.enabled ? '当前启用中' : '当前已停用' }}
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="p-3 text-xs text-gray-600 leading-6">
+                                            <div>人员 {{ getModuleUsage(module.id).doctorCount }} 人</div>
+                                            <div>班次 {{ getModuleUsage(module.id).shiftCount }} 个</div>
+                                            <div class="mt-1" :class="isDefaultModule(module.id) ? 'text-blue-600' : 'text-gray-400'">
+                                                {{ isDefaultModule(module.id) ? '默认模块' : '自定义模块' }}
+                                            </div>
+                                        </td>
+                                        <td class="p-3 text-center">
+                                            <div class="flex items-center justify-center gap-2 flex-wrap">
+                                                <button
+                                                    @click="toggleModuleEnabled(module.id)"
+                                                    class="win7-btn !min-h-[28px] !px-2"
+                                                    :class="[module.enabled ? 'win7-btn-danger' : 'win7-btn-primary', (module.enabled && getModuleToggleDisabledReason(module.id)) ? 'opacity-40 cursor-not-allowed' : '']"
+                                                    :disabled="module.enabled && !!getModuleToggleDisabledReason(module.id)"
+                                                    :title="module.enabled && getModuleToggleDisabledReason(module.id) ? getModuleToggleDisabledReason(module.id) : (module.enabled ? '停用模块' : '启用模块')">
+                                                    {{ module.enabled ? '停用' : '启用' }}
+                                                </button>
+                                                <button
+                                                    @click="deleteModule(module.id)"
+                                                    class="win7-btn win7-btn-danger !min-h-[28px] !px-2"
+                                                    :disabled="!!getModuleDeleteDisabledReason(module.id)"
+                                                    :title="getModuleDeleteDisabledReason(module.id) || '删除模块'"
+                                                    :class="getModuleDeleteDisabledReason(module.id) ? 'opacity-40 cursor-not-allowed' : ''">
+                                                    删除
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    <tr v-if="moduleManagerVisibleModules.length === 0">
+                                    <td colspan="7" class="p-8 text-center text-gray-500">暂无模块配置</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notice History Modal -->
+        <div v-if="showNoticeHistory" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[120]">
+            <div class="win7-modal-card notice-history-modal w-full max-w-3xl max-h-[84vh] flex flex-col">
+                <div class="win7-modal-header notice-history-modal__header px-4 py-3 flex justify-between items-center rounded-t-lg">
+                    <div class="notice-history-modal__title-wrap">
+                        <div class="notice-history-modal__eyebrow">{{ noticeHistoryField === 'teaching' ? '科室公告' : '特别备注' }}</div>
+                        <h3 class="notice-history-modal__title">历史版本预览</h3>
+                        <p class="notice-history-modal__subtitle">支持按关键字筛选、预览正文并回滚指定版本</p>
+                    </div>
+                    <button @click="showNoticeHistory = false" class="text-gray-400 hover:text-red-500 transition">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div v-if="canEditData" class="notice-history-modal__toolbar px-4 py-2 flex items-center justify-between gap-3">
+                    <span class="notice-history-modal__toolbar-text">公告历史已改为服务器持久化保存</span>
+                    <button @click="clearNoticeHistory" class="win7-btn win7-btn-danger !min-h-[24px] !px-2 text-[11px]" :disabled="noticeHistoryList.length === 0">清空全部</button>
+                </div>
+                <div class="notice-history-modal__body p-4 overflow-auto flex-grow">
+                    <div v-if="isLoadingNoticeHistory" class="notice-history-modal__empty text-center py-8 text-sm">
+                        正在加载历史版本...
+                    </div>
+                    <div v-else-if="noticeHistoryList.length === 0" class="notice-history-modal__empty text-center py-8 text-sm">
+                        暂无历史版本记录
+                    </div>
+                    <div v-else class="notice-history-modal__content space-y-4">
+                        <div class="notice-history-search-card">
+                            <div class="flex items-center justify-between gap-3 flex-wrap">
+                                <label class="notice-history-search-card__label">按关键字搜索</label>
+                                <span class="notice-history-search-card__count">共 {{ filteredNoticeHistoryList.length }} / {{ noticeHistoryList.length }} 条</span>
+                            </div>
+                            <input v-model.trim="noticeHistorySearchQuery" type="text" class="win7-input notice-history-search-card__input w-full p-2 text-sm bg-white" placeholder="可搜索正文、保存人、时间">
+                        </div>
+                        <div v-if="selectedNoticeHistoryRecord" class="notice-history-preview">
+                            <div class="flex items-start justify-between gap-4">
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <span class="notice-history-preview__badge">当前预览</span>
+                                        <span class="notice-history-preview__time">{{ formatHistoryTime(selectedNoticeHistoryRecord.createdAt || selectedNoticeHistoryRecord.timestamp) }}</span>
+                                    </div>
+                                    <div class="notice-history-preview__meta mt-1 text-xs">
+                                        <span v-if="selectedNoticeHistoryRecord.actor?.displayName" v-html="getNoticeHistoryHighlightedMetaHtml(`保存人：${selectedNoticeHistoryRecord.actor.displayName}`)"></span>
+                                        <span v-if="selectedNoticeHistoryRecord.actor?.displayName" class="mx-1">|</span>
+                                        <span>正文约 {{ getNoticeHistoryContentLength(selectedNoticeHistoryRecord) }} 字</span>
+                                    </div>
+                                </div>
+                                <button v-if="canEditData" @click="rollbackNotice(selectedNoticeHistoryRecord)" class="win7-btn !min-h-[24px] !px-2 text-[11px] shrink-0">回滚当前预览</button>
+                            </div>
+                            <div class="notice-history-preview__content mt-3" v-html="selectedNoticeHistoryRecord.content"></div>
+                            <div v-if="noticeHistorySearchQuery" class="notice-history-preview__snippet mt-3">
+                                <div class="notice-history-preview__snippet-title">命中摘要</div>
+                                <div class="notice-history-preview__snippet-body" v-html="getNoticeHistoryMatchSnippetHtml(selectedNoticeHistoryRecord)"></div>
+                            </div>
+                        </div>
+                        <div v-if="filteredNoticeHistoryList.length === 0" class="notice-history-modal__empty text-center py-6 text-sm">
+                            没有匹配到相关历史版本
+                        </div>
+                        <div v-for="(record, index) in filteredNoticeHistoryList" :key="record.id" class="notice-history-entry" :class="selectedNoticeHistoryRecord?.id === record.id ? 'notice-history-entry--active' : ''" @click="previewNoticeHistory(record)">
+                            <div class="flex justify-between items-start gap-3 mb-1">
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <span class="notice-history-entry__index">{{ getNoticeHistoryEntryLabel(index) }}</span>
+                                        <div class="notice-history-entry__time">{{ formatHistoryTime(record.createdAt || record.timestamp) }}</div>
+                                    </div>
+                                    <div v-if="record.actor?.displayName" class="notice-history-entry__actor" v-html="getNoticeHistoryHighlightedMetaHtml(`保存人：${record.actor.displayName}`)"></div>
+                                </div>
+                                <div class="notice-history-entry__actions">
+                                    <button v-if="canEditData" @click.stop="rollbackNotice(record)" class="win7-btn !min-h-[22px] !px-2 text-[10px]">回滚</button>
+                                    <button v-if="canEditData" @click.stop="deleteNoticeHistoryRecord(record)" class="win7-btn win7-btn-danger !min-h-[22px] !px-2 text-[10px]">删除</button>
+                                </div>
+                            </div>
+                            <div class="notice-history-entry__preview" v-html="getNoticeHistoryHighlightedPreviewHtml(record, 88)"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="notice-history-modal__footer px-4 py-3 flex justify-end">
+                    <button @click="showNoticeHistory = false" class="win7-btn">关闭</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Manager Modal -->
+        <div v-if="showHistoryManager" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[110]">
+            <div class="win7-modal-card w-full max-w-5xl max-h-[90vh] flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex justify-between items-center rounded-t-lg">
+                    <h3 class="text-lg font-bold text-gray-700">历史排班恢复</h3>
+                    <button @click="showHistoryManager = false" class="text-gray-400 hover:text-red-500 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
+                <div class="p-6 flex-grow overflow-auto">
+                    <div class="soft-info p-3 text-sm text-gray-600 mb-4">
+                        恢复某条历史记录前，系统会先自动把当前数据再留存一份，避免二次误操作。
+                    </div>
+
+                    <div v-if="isLoadingHistory" class="text-sm text-gray-500 py-8 text-center">历史记录加载中...</div>
+
+                    <div v-else class="border rounded-lg overflow-hidden">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-3 font-semibold text-gray-600 border-b">留存时间</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">操作人</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">摘要</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">排班天数</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">人员数</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b w-40 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="record in historyRecords" :key="record.id" class="hover:bg-gray-50 border-b last:border-0">
+                                    <td class="p-3">{{ formatHistoryTime(record.createdAt) }}</td>
+                                    <td class="p-3">{{ record.actor.displayName }} / {{ record.actor.role === 'terminal' ? '终端管理员' : '普通管理员' }}</td>
+                                    <td class="p-3">{{ record.summary }}</td>
+                                    <td class="p-3">{{ record.scheduledDayCount }}</td>
+                                    <td class="p-3">{{ record.doctorCount }}</td>
+                                    <td class="p-3 text-center">
+                                        <div class="flex items-center justify-center gap-2">
+                                            <button @click="restoreHistoryRecord(record.id)" class="win7-btn win7-btn-primary !min-h-[28px] !px-2">恢复</button>
+                                            <button @click="deleteHistoryRecord(record.id)" class="win7-btn win7-btn-danger !min-h-[28px] !px-2">删除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr v-if="!historyRecords.length">
+                                    <td colspan="6" class="p-8 text-center text-gray-500">暂无历史排班记录</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Display Settings Modal -->
+        <div v-if="showDisplaySettings" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[130]">
+            <div class="win7-modal-card w-full max-w-md flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex justify-between items-center rounded-t-lg">
+                    <h3 class="text-lg font-bold text-gray-700">界面显示配置</h3>
+                    <button @click="showDisplaySettings = false" class="text-gray-400 hover:text-red-500 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="p-6 space-y-6">
+                    <div class="space-y-4">
+                        <div class="flex flex-col gap-2">
+                            <div class="flex justify-between items-center">
+                                <label class="text-sm font-bold text-gray-700">排班表格字体</label>
+                                <span class="text-xs text-blue-600 font-mono">{{ uiSettings.scheduleFontSize }}px</span>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <input type="range" v-model.number="uiSettings.scheduleFontSize" min="11" max="22" step="1" @change="enforceUiSettingsBounds" class="flex-grow h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                                <input type="number" v-model.number="uiSettings.scheduleFontSize" min="11" max="22" step="1" @change="enforceUiSettingsBounds" class="win7-input w-16 text-center text-sm">
+                            </div>
+                            <p class="text-[11px] text-gray-500">调整主表格中姓名、职称和班次文字的大小。</p>
+                        </div>
+
+                        <div class="flex flex-col gap-2">
+                            <div class="flex justify-between items-center">
+                                <label class="text-sm font-bold text-gray-700">右侧栏宽度</label>
+                                <span class="text-xs text-blue-600 font-mono">{{ uiSettings.sidebarWidth }}px</span>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <input type="range" v-model.number="uiSettings.sidebarWidth" min="420" max="920" step="10" @change="enforceUiSettingsBounds" class="flex-grow h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                                <input type="number" v-model.number="uiSettings.sidebarWidth" min="420" max="920" step="10" @change="enforceUiSettingsBounds" class="win7-input w-20 text-center text-sm">
+                            </div>
+                            <p class="text-[11px] text-gray-500">调整右侧“当日排班人员”和“公告”区域的宽度。</p>
+                        </div>
+                    </div>
+
+                    <div class="pt-4 border-t flex justify-end">
+                        <button @click="showDisplaySettings = false" class="win7-btn win7-btn-primary px-6">
+                            完成配置
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Doctor Management Modal -->
+        <div v-if="showDoctorModal" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[100]">
+            <div class="win7-modal-card w-full max-w-4xl max-h-[90vh] min-h-0 flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex flex-col gap-4 rounded-t-lg">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-bold text-gray-700">人员信息管理</h3>
+                        <button @click="showDoctorModal = false" class="text-gray-400 hover:text-red-500 transition">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                    <!-- Management Navigation Tabs -->
+                    <div class="flex border-b border-gray-200">
+                        <button @click="showDoctorModal = false; openModuleManager()" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">模块设计</button>
+                        <button @click="showDoctorModal = false; openShiftManager()" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">班次设置</button>
+                        <button @click="showDoctorModal = false; openAutoScheduleModal()" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">批量排班</button>
+                    </div>
+                </div>
+                
+                <div class="p-6 flex-grow min-h-0 overflow-auto">
+                    <div class="soft-info p-4 mb-4 flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <div class="font-semibold text-gray-700">默认人员初始化</div>
+                            <div class="text-xs text-gray-500 mt-1">可一键把每个启用模块补齐到 3 人或 5 人，方便先搭好基础人员结构。</div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button @click="fillDefaultDoctorsForModules(3)" class="win7-btn">每模块补齐到 3 人</button>
+                            <button @click="fillDefaultDoctorsForModules(5)" class="win7-btn win7-btn-primary">每模块补齐到 5 人</button>
+                        </div>
+                    </div>
+
+                    <!-- Add Doctor Form -->
+                    <form @submit.prevent="addDoctor" class="flex flex-wrap gap-3 mb-6 soft-info p-4">
+                        <div class="flex-grow min-w-[150px]">
+                            <label class="block text-xs text-gray-500 mb-1">姓名</label>
+                            <input v-model="newDoctor.name" placeholder="输入姓名" required class="win7-input p-2 w-full text-sm">
+                        </div>
+                    <div class="flex-grow min-w-[150px]">
+                        <label class="block text-xs text-gray-500 mb-1">职称/职务</label>
+                        <div class="flex gap-1">
+                            <select v-model="newDoctor.title" required class="win7-select p-2 w-full text-sm bg-white">
+                                <option v-for="title in doctorTitleOptions" :key="'new-title-' + title" :value="title">{{ title }}</option>
+                            </select>
+                        </div>
+                    </div>
+                        <div class="flex-grow min-w-[150px]">
+                            <label class="block text-xs text-gray-500 mb-1">人员类别</label>
+                            <select v-model="newDoctor.category" class="win7-select p-2 w-full text-sm bg-white">
+                                <option v-for="module in doctorCategoryOptions" :key="'new-doc-module-' + module.value" :value="module.value">{{ module.label }}</option>
+                            </select>
+                        </div>
+                        <div class="flex-grow min-w-[180px]">
+                            <label class="block text-xs text-gray-500 mb-1">联系电话</label>
+                            <input v-model="newDoctor.phone" placeholder="输入联系电话" class="win7-input p-2 w-full text-sm">
+                        </div>
+                        <div class="flex items-end">
+                            <button type="submit" class="win7-btn win7-btn-primary h-[38px]">
+                                添加人员
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Doctor List -->
+                    <div class="border rounded-lg overflow-hidden">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-3 font-semibold text-gray-600 border-b">姓名</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">职称/职务</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">人员类别</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">联系电话</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b w-40 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="doc in doctors" :key="doc.id" class="hover:bg-gray-50 border-b last:border-0">
+                                    <td class="p-3">
+                                        <input v-model="doc.name" @blur="normalizeDoctorEditableFields(doc)" class="win7-input p-2 w-full text-sm bg-white" placeholder="输入姓名">
+                                    </td>
+                                    <td class="p-3">
+                                        <select v-model="doc.title" @change="normalizeDoctorEditableFields(doc)" class="win7-select p-2 w-full text-sm bg-white">
+                                            <option v-for="title in doctorTitleOptions" :key="'doc-title-' + doc.id + '-' + title" :value="title">{{ title }}</option>
+                                        </select>
+                                    </td>
+                                    <td class="p-3">
+                                        <select v-model="doc.category" class="win7-select p-2 w-full text-sm bg-white">
+                                            <option v-for="module in doctorCategoryOptions" :key="'doc-module-' + doc.id + '-' + module.value" :value="module.value">{{ module.label }}</option>
+                                        </select>
+                                    </td>
+                                    <td class="p-3">
+                                        <input v-model="doc.phone" @blur="normalizeDoctorEditableFields(doc)" placeholder="未录入" class="win7-input p-2 w-full text-sm bg-white">
+                                    </td>
+                                    <td class="p-3 text-center">
+                                        <div class="flex items-center justify-center gap-1">
+                                            <button
+                                                @click="moveDoctor(doc.id, 'up')"
+                                                :disabled="!canMoveDoctorUp(doc.id)"
+                                                class="win7-btn !min-h-[28px] !px-2"
+                                                :class="!canMoveDoctorUp(doc.id) ? 'opacity-40 cursor-not-allowed' : ''"
+                                                title="同类别上移">
+                                                ↑
+                                            </button>
+                                            <button
+                                                @click="moveDoctor(doc.id, 'down')"
+                                                :disabled="!canMoveDoctorDown(doc.id)"
+                                                class="win7-btn !min-h-[28px] !px-2"
+                                                :class="!canMoveDoctorDown(doc.id) ? 'opacity-40 cursor-not-allowed' : ''"
+                                                title="同类别下移">
+                                                ↓
+                                            </button>
+                                            <button @click="deleteDoctor(doc.id)" class="win7-btn win7-btn-danger !min-h-[28px] !px-2">删除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr v-if="doctors.length === 0">
+                                    <td colspan="5" class="p-8 text-center text-gray-500">暂无人员信息，请先添加</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Admin Manager Modal -->
+        <div v-if="showAdminManager" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[110]">
+            <div class="win7-modal-card w-full max-w-4xl max-h-[90vh] flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex justify-between items-center rounded-t-lg">
+                    <h3 class="text-lg font-bold text-gray-700">管理员账号管理</h3>
+                    <button @click="showAdminManager = false" class="text-gray-400 hover:text-red-500 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+
+                <div class="p-6 flex-grow overflow-auto flex flex-col gap-6">
+                    <form @submit.prevent="createAdminAccount" class="soft-info p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 items-start">
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">账号</label>
+                            <input v-model="newAdmin.username" :disabled="isEditingAdminAccount" required class="win7-input p-2 w-full text-sm" :class="isEditingAdminAccount ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''" placeholder="输入管理员账号">
+                            <p v-if="isEditingAdminAccount" class="mt-1 text-xs text-gray-400">编辑时账号不可修改</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">密码</label>
+                            <input v-model="newAdmin.password" type="password" :required="!isEditingAdminAccount" class="win7-input p-2 w-full text-sm" :placeholder="isEditingAdminAccount ? '留空表示不修改密码' : '输入登录密码'">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">角色</label>
+                            <select v-model="newAdmin.role" class="win7-select p-2 w-full text-sm bg-white">
+                                <option value="admin">普通管理员</option>
+                                <option value="terminal">终端管理员</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">显示名称</label>
+                            <input v-model="newAdmin.displayName" class="win7-input p-2 w-full text-sm" placeholder="如：门诊管理员">
+                        </div>
+                        <div class="md:col-span-2 xl:col-span-4">
+                            <label class="block text-xs text-gray-500 mb-2">授权科室</label>
+                            <div v-if="newAdmin.role === 'admin'" class="bg-white border border-gray-300 rounded-md p-3 flex flex-wrap gap-3 min-h-[48px]">
+                                <label v-for="department in departmentOptions" :key="'admin-dept-' + department.value" class="flex items-center gap-2 text-sm text-gray-700">
+                                    <input v-model="newAdmin.departmentIds" type="checkbox" :value="department.value">
+                                    <span>{{ department.label }}</span>
+                                </label>
+                                <span v-if="departmentOptions.length === 0" class="text-sm text-gray-400">当前暂无可分配科室</span>
+                            </div>
+                            <div v-else class="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                                终端管理员默认可访问全部科室，无需单独分配。
+                            </div>
+                        </div>
+                        <div class="md:col-span-2 xl:col-span-4 flex justify-between items-center gap-3">
+                            <div class="text-xs text-gray-500">
+                                {{ isEditingAdminAccount ? '正在编辑管理员账号' : '新增普通管理员时必须至少选择一个科室' }}
+                            </div>
+                            <div class="flex gap-2">
+                                <button v-if="isEditingAdminAccount" type="button" @click="cancelAdminEdit" class="win7-btn">取消编辑</button>
+                                <button type="submit" class="win7-btn win7-btn-primary" :disabled="!canSubmitAdminForm" :class="!canSubmitAdminForm ? 'opacity-50 cursor-not-allowed' : ''">
+                                    {{ isEditingAdminAccount ? '保存修改' : '添加管理员' }}
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <div class="border rounded-lg overflow-hidden">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-3 font-semibold text-gray-600 border-b">显示名称</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">账号</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">角色</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">授权科室</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b w-36 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="admin in adminAccounts" :key="admin.id" class="hover:bg-gray-50 border-b last:border-0">
+                                    <td class="p-3">{{ admin.displayName }}</td>
+                                    <td class="p-3">{{ admin.username }}</td>
+                                    <td class="p-3">{{ admin.role === 'terminal' ? '终端管理员' : '普通管理员' }}</td>
+                                    <td class="p-3 text-gray-600">
+                                        {{ getAdminDepartmentNames(admin).join('、') || '未分配' }}
+                                    </td>
+                                    <td class="p-3 text-center">
+                                        <div class="flex items-center justify-center gap-2">
+                                            <button @click="editAdminAccount(admin)" class="win7-btn !min-h-[28px] !px-2">编辑</button>
+                                            <button @click="deleteAdminAccount(admin.id)" class="win7-btn win7-btn-danger !min-h-[28px] !px-2">删除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr v-if="adminAccounts.length === 0">
+                                    <td colspan="5" class="p-8 text-center text-gray-500">暂无管理员账号</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Shift Manager Modal -->
+        <div v-if="showShiftManager" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[100]">
+            <div class="win7-modal-card w-full max-w-4xl max-h-[90vh] flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex flex-col gap-4 rounded-t-lg">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-bold text-gray-700">班次自定义设置</h3>
+                        <button @click="showShiftManager = false" class="text-gray-400 hover:text-red-500 transition">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                    <!-- Management Navigation Tabs -->
+                    <div class="flex border-b border-gray-200">
+                        <button @click="showShiftManager = false; openModuleManager()" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">模块设计</button>
+                        <button class="px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-600">班次设置</button>
+                        <button @click="showShiftManager = false; openAutoScheduleModal()" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">批量排班</button>
+                    </div>
+                </div>
+                
+                <div class="p-6 flex-grow overflow-auto flex flex-col gap-6">
+                    <!-- Add/Edit Shift Form -->
+                    <form @submit.prevent="saveShift" class="win7-subpanel p-4 flex flex-col gap-4">
+                        <h4 class="font-bold text-sm text-gray-700 border-b pb-2">{{ editingShift.id ? '编辑班次' : '新增班次' }}</h4>
+                        <div class="flex flex-wrap gap-4">
+                            <div class="flex-grow min-w-[120px]">
+                                <label class="block text-xs text-gray-500 mb-1">班次全称</label>
+                                <input v-model="editingShift.name" placeholder="如: 白班" required class="win7-input p-2 w-full text-sm">
+                            </div>
+                            <div class="flex-[2_1_360px] min-w-[300px]">
+                                <label class="block text-xs text-gray-500 mb-1">显示颜色 (24种专业配色)</label>
+                                <div class="shift-color-picker">
+                                    <button type="button" v-for="color in colorOptions" :key="color.value"
+                                            @click="editingShift.color = color.value"
+                                            class="shift-color-option"
+                                            :class="editingShift.color === color.value ? 'shift-color-option--active' : ''"
+                                            :title="color.label"
+                                            :aria-label="color.label">
+                                        <span class="shift-color-option__swatch" :class="color.class"></span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-2">适用人员类别 (多选)</label>
+                            <div class="flex flex-wrap gap-4 bg-white p-2 rounded border border-gray-300">
+                                <label v-for="module in doctorCategoryOptions" :key="'shift-module-' + module.value" class="flex items-center gap-1 text-sm">
+                                    <input type="checkbox" v-model="editingShift.categories" :value="module.value"> {{ module.label }}
+                                </label>
+                            </div>
+                        </div>
+                        <div class="flex justify-end gap-2">
+                            <button v-if="editingShift.id" type="button" @click="resetEditingShift" class="win7-btn">取消编辑</button>
+                            <button type="submit" class="win7-btn win7-btn-primary">
+                                {{ editingShift.id ? '保存修改' : '添加班次' }}
+                            </button>
+                        </div>
+                    </form>
+
+                    <!-- Shift List -->
+                    <div class="border rounded-lg overflow-hidden">
+                        <div class="max-h-[360px] overflow-y-auto">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-3 font-semibold text-gray-600 border-b">样式预览</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">全称</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">适用类别</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b w-32 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="shift in sortedShiftTypes" :key="shift.id" :id="'shift-row-' + shift.id" class="hover:bg-gray-50 border-b last:border-0 align-middle">
+                                    <td class="p-3 min-h-[56px]">
+                                        <div class="max-h-[52px] overflow-y-auto pr-1">
+                                            <span class="inline-flex items-center px-3 py-1.5 rounded text-sm font-medium leading-snug whitespace-normal break-all" :class="'shift-color-' + shift.color">
+                                                {{ shift.name }}
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="p-3 font-medium align-middle">{{ shift.name }}</td>
+                                    <td class="p-3 text-xs text-gray-500 align-middle leading-relaxed">
+                                        {{ shift.categories.map(c => getCategoryName(c)).join(', ') }}
+                                    </td>
+                                    <td class="p-3 text-center align-middle">
+                                        <button @click="editShift(shift)" class="win7-btn !min-h-[28px] !px-2 mr-1">编辑</button>
+                                        <button @click="deleteShift(shift.id)" class="win7-btn win7-btn-danger !min-h-[28px] !px-2">删除</button>
+                                    </td>
+                                </tr>
+                                <tr v-if="sortedShiftTypes.length === 0">
+                                    <td colspan="4" class="p-8 text-center text-gray-500">暂无班次配置，请先添加</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Auto Schedule Modal -->
+        <div v-if="showAutoSchedule" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[100]">
+            <div class="win7-modal-card w-full max-w-[1400px]">
+                <div class="win7-modal-header px-6 py-4 flex flex-col gap-4 rounded-t-lg">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-lg font-bold text-gray-700">批量排班设置</h3>
+                        <button @click="showAutoSchedule = false" class="text-gray-400 hover:text-red-500 transition">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        </button>
+                    </div>
+                    <!-- Management Navigation Tabs -->
+                    <div class="flex border-b border-gray-200">
+                        <button @click="showAutoSchedule = false; openModuleManager()" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">模块设计</button>
+                        <button @click="showAutoSchedule = false; openShiftManager()" class="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300">班次设置</button>
+                        <button class="px-4 py-2 text-sm font-medium border-b-2 border-blue-500 text-blue-600">批量排班</button>
+                    </div>
+                </div>
+                
+                <div class="p-6 flex flex-col gap-5">
+                     <div class="soft-info p-3 text-sm flex gap-2">
+                        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                         支持单人排班和按整组批量生成。二线/三线整组排班可同时结合固定门诊周几与循环班次一起生成。
+                    </div>
+
+                    <div class="flex items-center gap-3 flex-wrap">
+                        <button
+                            type="button"
+                            @click="autoScheduleConfig.mode = 'individual'"
+                            class="win7-btn"
+                            :class="autoScheduleConfig.mode === 'individual' ? 'win7-btn-primary' : ''">
+                            单人排班
+                        </button>
+                        <button
+                            type="button"
+                            @click="activateGroupAutoSchedule"
+                            class="win7-btn"
+                            :class="autoScheduleConfig.mode === 'group' ? 'win7-btn-primary' : ''">
+                            按整组批量生成
+                        </button>
+                        <span class="text-xs text-gray-500" v-if="autoScheduleConfig.mode === 'group'">按组时以开始日期为基点，当天自动补齐全组排班，并按医生顺序循环错位</span>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                        <div v-if="autoScheduleConfig.mode === 'individual'">
+                             <label class="block text-sm font-medium text-gray-700 mb-1">选择人员</label>
+                             <select v-model="autoScheduleConfig.doctorId" class="win7-select bg-white px-3 py-2 w-full">
+                                 <option value="">-- 请选择要排班的人员 --</option>
+                                 <option v-for="doc in enabledDoctors" :key="doc.id" :value="doc.id">{{ doc.name }}（{{ getCategoryName(doc.category) }}）</option>
+                            </select>
+                        </div>
+                        <div v-else>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">选择分组</label>
+                            <select v-model="autoScheduleConfig.groupCategory" class="win7-select bg-white px-3 py-2 w-full">
+                                <option v-for="module in autoScheduleModules" :key="'auto-module-' + module.value" :value="module.value">{{ module.label }}</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">跳过周末</label>
+                            <label class="flex items-center min-h-[42px] gap-2 cursor-pointer border border-gray-300 rounded-lg px-3 bg-white">
+                                <input type="checkbox" v-model="autoScheduleConfig.skipWeekend" class="w-4 h-4 text-medical">
+                                <span class="text-sm text-gray-600">周末不安排该班次</span>
+                            </label>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">开始日期</label>
+                            <input type="date" v-model="autoScheduleConfig.startDate" class="win7-input bg-white px-3 py-2 w-full">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">结束日期</label>
+                            <input type="date" v-model="autoScheduleConfig.endDate" class="win7-input bg-white px-3 py-2 w-full">
+                        </div>
+                    </div>
+
+                    <div v-if="autoScheduleConfig.mode === 'group'" class="win7-subpanel p-4 flex flex-col gap-3">
+                        <div class="flex items-center justify-between">
+                            <label class="block text-sm font-semibold text-gray-700">参与循环的医生</label>
+                            <div class="flex items-center gap-3 text-xs">
+                                <button type="button" @click="setAllGroupDoctorsSelected(true)" class="text-blue-600 hover:text-blue-800">全选</button>
+                                <button type="button" @click="setAllGroupDoctorsSelected(false)" class="text-red-500 hover:text-red-700">清空</button>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <label v-for="doc in availableGroupDoctors" :key="'group-doc-' + doc.id" class="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 cursor-pointer">
+                                <input type="checkbox" :checked="autoScheduleConfig.groupDoctorIds.includes(doc.id)" @change="toggleGroupDoctorSelection(doc.id)" class="w-4 h-4">
+                                <span>{{ doc.name }}</span>
+                            </label>
+                            <div v-if="availableGroupDoctors.length === 0" class="text-sm text-gray-400 py-2">
+                                当前分组还没有可选医生，请先在人员管理中维护该分组人员。
+                            </div>
+                        </div>
+                        <div class="text-xs text-gray-500">
+                            可只勾选参与循环的医生，不参与循环的医生不再自动写入该批量排班结果。
+                        </div>
+                    </div>
+
+                    <div class="text-xs text-gray-500 -mt-2">
+                        目标人数：{{ selectedAutoTargets.length }} 人
+                    </div>
+
+                    <div v-if="activeAutoCategory && (activeAutoCategory === 'second' || activeAutoCategory === 'third')" class="win7-subpanel p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <label class="block text-sm font-semibold text-gray-700">固定门诊时间（按周几）</label>
+                            <span class="text-xs text-gray-500">固定门诊与教学/值班/普通班会同日叠加显示，不再相互覆盖</span>
+                        </div>
+                        <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
+                            <div v-for="weekday in weekdayOptions" :key="'weekday-' + weekday.value">
+                                <label class="block text-xs text-gray-600 mb-1">{{ weekday.label }}</label>
+                                <select v-model="autoScheduleConfig.fixedWeekdays[weekday.value]" class="win7-select px-3 py-2 w-full text-sm bg-white">
+                                    <option value="">不固定</option>
+                                    <option v-for="shift in availableFixedWeeklyShiftsForAuto" :key="'clinic-' + weekday.value + '-' + shift.id" :value="shift.id">
+                                        {{ shift.name }}
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                     <div class="grid grid-cols-1 gap-4">
+                         <div>
+                             <div class="flex items-center justify-between mb-2">
+                                 <label class="block text-sm font-medium text-gray-700">循环班次</label>
+                                 <button @click="clearCycleSequence" type="button" class="text-xs text-red-500 hover:text-red-700">清空序列</button>
+                             </div>
+                             <div class="win7-subpanel p-3 flex flex-wrap gap-2 min-h-[56px]">
+                                 <button
+                                     v-for="shift in availableShiftsForAuto"
+                                     :key="'auto-' + shift.id"
+                                     type="button"
+                                     @click="addShiftToCycle(shift.id)"
+                                     class="px-3 py-1.5 rounded text-sm font-medium hover:opacity-80 transition"
+                                     :class="getShiftColorClass(shift.id)">
+                                     {{ shift.name }}
+                                 </button>
+                                 <div v-if="autoScheduleConfig.mode === 'individual' && !autoScheduleConfig.doctorId" class="text-sm text-gray-500">请先选择人员</div>
+                                 <div v-else-if="autoScheduleConfig.mode === 'group' && !autoScheduleConfig.groupCategory" class="text-sm text-gray-500">请先选择分组</div>
+                                 <div v-else-if="availableShiftsForAuto.length === 0" class="text-sm text-gray-500">当前人员暂无可循环班次</div>
+                             </div>
+                         </div>
+
+                         <div>
+                             <label class="block text-sm font-medium text-gray-700 mb-2">循环班次序列</label>
+                             <div class="win7-subpanel p-3 bg-white min-h-[64px] flex flex-wrap gap-2">
+                                 <div
+                                     v-for="(shiftId, index) in autoScheduleConfig.cycleShiftIds"
+                                     :key="shiftId + '-' + index"
+                                     class="inline-flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium"
+                                     :class="getShiftColorClass(shiftId)">
+                                     <span>{{ index + 1 }}. {{ getShiftName(shiftId) }}</span>
+                                     <button type="button" class="text-xs opacity-80 hover:opacity-100" @click="removeCycleShift(index)">删除</button>
+                                 </div>
+                                 <div v-if="autoScheduleConfig.cycleShiftIds.length === 0" class="text-sm text-gray-400">
+                                     还未添加班次，请按顺序点击上方班次形成循环模板；二线/三线可同时结合上面的固定门诊周几使用
+                                 </div>
+                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-2 rounded-b-lg">
+                    <button @click="showAutoSchedule = false" class="win7-btn">取消</button>
+                    <button @click="generateAutoSchedule" class="win7-btn win7-btn-primary">生成排班</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alerts -->
+        <div v-if="alert.show" class="fixed top-4 right-4 z-[200] p-4 rounded shadow-lg max-w-sm transition-all flex items-start"
+             :class="{'bg-red-50 text-red-800 border-l-4 border-red-500': alert.type === 'error', 'bg-green-50 text-green-800 border-l-4 border-green-500': alert.type === 'success'}">
+            <div class="mr-3 mt-0.5">
+                <svg v-if="alert.type === 'success'" class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                <svg v-if="alert.type === 'error'" class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            </div>
+            <div>
+                <h4 class="font-bold text-sm">{{ alert.type === 'error' ? '操作失败' : '操作成功' }}</h4>
+                <p class="text-xs mt-1 opacity-90">{{ alert.message }}</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.write('<script src="js/app.js?v=' + new Date().getTime() + '"><\/script>');
+    </script>
+</body>
+</html>

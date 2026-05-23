@@ -1,0 +1,8 @@
+node_modules/
+.cache/
+*.log
+artifacts/
+data/backups/
+data/*.json
+!data/drafts.json
+.env

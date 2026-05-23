@@ -1,0 +1,18 @@
+{
+  "name": "paiban",
+  "version": "1.0.0",
+  "description": "临床医生智能排班系统",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node scripts/run-full-e2e-suite.js",
+    "report": "node scripts/build-latest-e2e-report.js",
+    "cleanup": "node scripts/cleanup-test-artifacts.js"
+  },
+  "dependencies": {
+    "cors": "2.8.6",
+    "express": "4.22.2",
+    "jsdom": "29.1.1",
+    "puppeteer": "19.11.1"
+  }
+}

@@ -1,0 +1,4 @@
+{
+  "success": false,
+  "error": "ReferenceError: PUPPETEER_OPTIONS is not defined\n    at run (C:\\Users\\94725\\Desktop\\paiban\\scripts\\verify-custom-module-sidebar.js:181:48)\n    at processTicksAndRejections (internal/process/task_queues.js:95:5)"
+}
