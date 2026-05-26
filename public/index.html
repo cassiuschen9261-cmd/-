@@ -247,6 +247,22 @@
                             可撤销：{{ recentClearAction.summary }}
                         </div>
                     </template>
+                    <button v-if="canEditData" @click="openStatsModal" class="win7-btn flex items-center gap-1" title="查看当前视图的班次统计">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        班次统计
+                    </button>
+                    <button v-if="canEditData" @click="toggleCurrentMonthLock" class="win7-btn flex items-center gap-1" :class="isCurrentPeriodLocked ? 'win7-btn-danger' : ''" :title="isCurrentPeriodLocked ? `点击解锁 ${currentViewMonths[0]}` : `点击锁定 ${currentViewMonths[0]}，防止修改`">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" :d="isCurrentPeriodLocked ? 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z' : 'M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z'"></path></svg>
+                        {{ isCurrentPeriodLocked ? '已锁定' : '锁定月份' }}
+                    </button>
+                    <button v-if="canEditData" @click="openHolidayManager" class="win7-btn flex items-center gap-1" title="管理节假日">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                        节假日
+                    </button>
+                    <button v-if="canEditData" @click="openTemplateManager" class="win7-btn flex items-center gap-1" title="排班模板管理">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                        排班模板
+                    </button>
                     <button v-if="canEditData" @click="exportExcel" class="win7-btn win7-btn-success">
                         <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                         导出 Excel
@@ -256,6 +272,10 @@
                     </button>
                     <button v-if="canEditData" @click="exportPDF" class="win7-btn">
                         导出 PDF
+                    </button>
+                    <button v-if="currentUser" @click="exportIcal()" class="win7-btn flex items-center gap-1" title="导出全员 iCal 日历文件，可导入手机/电脑日历">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                        导出 iCal
                     </button>
                 </div>
             </div>
@@ -272,9 +292,10 @@
                                 </th>
                                 <th v-for="day in calendarDays" :key="day.dateStr" 
                                     class="schedule-board__day min-w-[80px] p-2 bg-gray-100 text-gray-700 z-20"
-                                    :class="{'bg-blue-50 text-medical-dark': day.isToday, 'text-red-500': day.isWeekend}">
+                                    :class="{'bg-blue-50 text-medical-dark': day.isToday, 'text-red-500': day.isWeekend, 'opacity-60': isDateLocked(day.dateStr)}">
                                     <div class="font-bold">{{ day.dateNum }}</div>
                                     <div class="text-xs font-normal">{{ day.dayOfWeek }}</div>
+                                    <div v-if="isDateLocked(day.dateStr)" class="text-xs leading-none mt-0.5" title="此月份已锁定">🔒</div>
                                 </th>
                             </tr>
                         </thead>
@@ -290,9 +311,10 @@
                                 <tr v-for="doc in group" :key="doc.id" class="schedule-doctor-row hover:bg-gray-50 transition-colors">
                                     <th class="schedule-doctor-cell text-left font-medium text-gray-800 bg-white sticky left-0 z-10 shadow-[1px_0_0_0_#e5e7eb]"
                                         :class="compactMode ? 'p-1 w-[78px] max-w-[78px]' : 'p-1.5 w-[92px] max-w-[92px]'">
-                                        <div class="schedule-doctor-cell__content flex flex-col leading-tight">
+                                        <div class="schedule-doctor-cell__content flex flex-col leading-tight" :title="doc.notes ? doc.name + '：' + doc.notes : ''">
                                             <span class="truncate" :style="scheduleDoctorNameStyle">{{ doc.name }}</span>
                                             <span class="text-gray-500 font-normal truncate" :style="scheduleDoctorTitleStyle">{{ doc.title }}</span>
+                                            <span v-if="doc.notes" class="text-amber-600 font-normal truncate text-[10px] leading-tight">{{ doc.notes }}</span>
                                         </div>
                                     </th>
                                     
@@ -300,7 +322,7 @@
                                         class="schedule-grid-cell p-1 relative cursor-pointer transition-colors"
                                         :class="[
                                             compactMode ? 'h-11 min-w-[72px]' : 'h-16 min-w-[84px]',
-                                            {'bg-gray-50/50': day.isWeekend, 'hover:bg-gray-100': true}
+                                            {'bg-gray-50/50': day.isWeekend, 'hover:bg-gray-100': !isDateLocked(day.dateStr), 'bg-slate-100/70 cursor-not-allowed': isDateLocked(day.dateStr)}
                                         ]"
                                         @click.stop="handleScheduleCellClick(doc, day, $event)">
                                         
@@ -368,7 +390,12 @@
                     <!-- Date Selector for Sidebar -->
                     <div class="win7-subpanel p-3">
                         <label class="sidebar-panel-title block font-bold text-gray-700 mb-2">排班概览日期</label>
-                        <input type="date" v-model="selectedSidebarDate" class="win7-input w-full p-2 text-sm bg-white">
+                        <div class="flex items-center gap-1">
+                            <button @click="prevSidebarDay" class="win7-btn !min-h-[34px] !px-2" title="前一天">&larr;</button>
+                            <input type="date" v-model="selectedSidebarDate" class="win7-input flex-1 p-2 text-sm bg-white">
+                            <button @click="nextSidebarDay" class="win7-btn !min-h-[34px] !px-2" title="后一天">&rarr;</button>
+                            <button @click="resetSidebarDateToToday" class="win7-btn !min-h-[34px] !px-2 text-xs" title="回到今天">今</button>
+                        </div>
                     </div>
 
 
@@ -1314,9 +1341,12 @@
                 <div class="win7-modal-header px-6 py-4 flex flex-col gap-4 rounded-t-lg">
                     <div class="flex justify-between items-center">
                         <h3 class="text-lg font-bold text-gray-700">人员信息管理</h3>
-                        <button @click="showDoctorModal = false" class="text-gray-400 hover:text-red-500 transition">
-                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                        </button>
+                        <div class="flex items-center gap-2">
+                            <button @click="exportDoctorsExcel()" class="win7-btn !min-h-[30px] !px-3 text-sm" title="将当前所有人员信息导出为 Excel 文件">📥 导出人员 Excel</button>
+                            <button @click="showDoctorModal = false" class="text-gray-400 hover:text-red-500 transition">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                        </div>
                     </div>
                     <!-- Management Navigation Tabs -->
                     <div class="flex border-b border-gray-200">
@@ -1362,6 +1392,10 @@
                             <label class="block text-xs text-gray-500 mb-1">联系电话</label>
                             <input v-model="newDoctor.phone" placeholder="输入联系电话" class="win7-input p-2 w-full text-sm">
                         </div>
+                        <div class="flex-grow min-w-[200px]">
+                            <label class="block text-xs text-gray-500 mb-1">备注</label>
+                            <input v-model="newDoctor.notes" placeholder="特殊情况、备注信息" class="win7-input p-2 w-full text-sm">
+                        </div>
                         <div class="flex items-end">
                             <button type="submit" class="win7-btn win7-btn-primary h-[38px]">
                                 添加人员
@@ -1378,6 +1412,7 @@
                                     <th class="p-3 font-semibold text-gray-600 border-b">职称/职务</th>
                                     <th class="p-3 font-semibold text-gray-600 border-b">人员类别</th>
                                     <th class="p-3 font-semibold text-gray-600 border-b">联系电话</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">备注</th>
                                     <th class="p-3 font-semibold text-gray-600 border-b w-40 text-center">操作</th>
                                 </tr>
                             </thead>
@@ -1399,30 +1434,44 @@
                                     <td class="p-3">
                                         <input v-model="doc.phone" @blur="normalizeDoctorEditableFields(doc)" placeholder="未录入" class="win7-input p-2 w-full text-sm bg-white">
                                     </td>
+                                    <td class="p-3">
+                                        <input v-model="doc.notes" @blur="normalizeDoctorEditableFields(doc)" placeholder="无" class="win7-input p-2 w-full text-sm bg-white">
+                                    </td>
                                     <td class="p-3 text-center">
-                                        <div class="flex items-center justify-center gap-1">
-                                            <button
-                                                @click="moveDoctor(doc.id, 'up')"
-                                                :disabled="!canMoveDoctorUp(doc.id)"
-                                                class="win7-btn !min-h-[28px] !px-2"
-                                                :class="!canMoveDoctorUp(doc.id) ? 'opacity-40 cursor-not-allowed' : ''"
-                                                title="同类别上移">
-                                                ↑
-                                            </button>
-                                            <button
-                                                @click="moveDoctor(doc.id, 'down')"
-                                                :disabled="!canMoveDoctorDown(doc.id)"
-                                                class="win7-btn !min-h-[28px] !px-2"
-                                                :class="!canMoveDoctorDown(doc.id) ? 'opacity-40 cursor-not-allowed' : ''"
-                                                title="同类别下移">
-                                                ↓
-                                            </button>
-                                            <button @click="deleteDoctor(doc.id)" class="win7-btn win7-btn-danger !min-h-[28px] !px-2">删除</button>
+                                        <div class="flex flex-col items-center gap-1">
+                                            <div class="flex items-center justify-center gap-1">
+                                                <button
+                                                    @click="moveDoctor(doc.id, 'up')"
+                                                    :disabled="!canMoveDoctorUp(doc.id)"
+                                                    class="win7-btn !min-h-[28px] !px-2"
+                                                    :class="!canMoveDoctorUp(doc.id) ? 'opacity-40 cursor-not-allowed' : ''"
+                                                    title="同类别上移">
+                                                    ↑
+                                                </button>
+                                                <button
+                                                    @click="moveDoctor(doc.id, 'down')"
+                                                    :disabled="!canMoveDoctorDown(doc.id)"
+                                                    class="win7-btn !min-h-[28px] !px-2"
+                                                    :class="!canMoveDoctorDown(doc.id) ? 'opacity-40 cursor-not-allowed' : ''"
+                                                    title="同类别下移">
+                                                    ↓
+                                                </button>
+                                                <button @click="openCopyDoctorPopup(doc.id)" class="win7-btn !min-h-[28px] !px-2" title="复制到其他模块">复制</button>
+                                                <button @click="exportIcal(doc.id)" class="win7-btn !min-h-[28px] !px-2" title="导出该人员 iCal 日历">📅</button>
+                                                <button @click="deleteDoctor(doc.id)" class="win7-btn win7-btn-danger !min-h-[28px] !px-2">删除</button>
+                                            </div>
+                                            <div v-if="copyDoctorPopup.doctorId === doc.id" class="flex items-center gap-1 mt-1">
+                                                <select v-model="copyDoctorPopup.targetModuleId" class="win7-select p-1 text-xs bg-white">
+                                                    <option v-for="module in doctorCategoryOptions.filter(m => m.value !== doc.category)" :key="'copy-target-' + module.value" :value="module.value">{{ module.label }}</option>
+                                                </select>
+                                                <button @click="copyDoctorToModule()" class="win7-btn win7-btn-primary !min-h-[26px] !px-2 text-xs">确认</button>
+                                                <button @click="closeCopyDoctorPopup()" class="win7-btn !min-h-[26px] !px-2 text-xs">取消</button>
+                                            </div>
                                         </div>
                                     </td>
                                 </tr>
                                 <tr v-if="doctors.length === 0">
-                                    <td colspan="5" class="p-8 text-center text-gray-500">暂无人员信息，请先添加</td>
+                                    <td colspan="6" class="p-8 text-center text-gray-500">暂无人员信息，请先添加</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -1784,6 +1833,160 @@
                 <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-2 rounded-b-lg">
                     <button @click="showAutoSchedule = false" class="win7-btn">取消</button>
                     <button @click="generateAutoSchedule" class="win7-btn win7-btn-primary">生成排班</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Holiday Manager Modal -->
+        <div v-if="showHolidayManager" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[100]">
+            <div class="win7-modal-card w-full max-w-2xl max-h-[85vh] flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex justify-between items-center rounded-t-lg">
+                    <h3 class="text-lg font-bold text-gray-700">节假日管理</h3>
+                    <button @click="showHolidayManager = false" class="text-gray-400 hover:text-red-500 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="p-6 flex-grow overflow-auto flex flex-col gap-4">
+                    <div class="soft-info p-4 flex items-end gap-3">
+                        <div class="flex-grow">
+                            <label class="block text-xs text-gray-500 mb-1">添加节假日日期</label>
+                            <input type="date" v-model="newHolidayDate" class="win7-input p-2 w-full text-sm bg-white">
+                        </div>
+                        <button @click="addHoliday" class="win7-btn win7-btn-primary h-[38px]">添加</button>
+                    </div>
+                    <div class="text-xs text-gray-500 px-1">当前共 {{ holidays.length }} 个节假日，影响周末/节假日班次规则检查（周末以外的日期标为节假日后同样禁止安排白班）。</div>
+                    <div class="border rounded-lg overflow-hidden">
+                        <table class="w-full text-sm text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-3 font-semibold text-gray-600 border-b">日期</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">星期</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b w-24 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="d in [...holidays].sort()" :key="d" class="hover:bg-gray-50 border-b last:border-0">
+                                    <td class="p-3 font-mono">{{ d }}</td>
+                                    <td class="p-3 text-gray-500">{{ ['日','一','二','三','四','五','六'][new Date(d).getDay()] }}</td>
+                                    <td class="p-3 text-center">
+                                        <button @click="removeHoliday(d)" class="win7-btn win7-btn-danger !min-h-[28px] !px-2">移除</button>
+                                    </td>
+                                </tr>
+                                <tr v-if="holidays.length === 0">
+                                    <td colspan="3" class="p-6 text-center text-gray-400">暂无节假日，使用内置 2026 年默认节假日</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats Modal -->
+        <div v-if="showStatsModal" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[100]">
+            <div class="win7-modal-card w-full max-w-5xl max-h-[90vh] flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex justify-between items-center rounded-t-lg">
+                    <h3 class="text-lg font-bold text-gray-700">班次统计 — {{ displayDateRange }}</h3>
+                    <button @click="showStatsModal = false" class="text-gray-400 hover:text-red-500 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="p-6 flex-grow overflow-auto">
+                    <div class="flex items-center gap-3 text-sm text-gray-600 mb-2 px-1">
+                        <span>共 <strong>{{ periodStats.rows.length }}</strong> 人</span>
+                        <span class="text-gray-300">|</span>
+                        <span>人均班次：<strong class="text-blue-700">{{ periodStats.avg }}</strong> 次</span>
+                        <span class="text-gray-300">|</span>
+                        <span class="text-amber-600">偏少 = &lt; 均值×75%</span>
+                        <span class="text-red-600">偏多 = &gt; 均值×125%</span>
+                    </div>
+                    <div class="border rounded-lg overflow-auto">
+                        <table class="text-sm text-left border-collapse min-w-full">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-3 font-semibold text-gray-600 border-b sticky left-0 bg-gray-100 z-10">姓名</th>
+                                    <th v-for="col in periodStats.columns" :key="col.id" class="p-3 font-semibold text-gray-600 border-b text-center whitespace-nowrap">{{ col.name }}</th>
+                                    <th class="p-3 font-semibold text-gray-700 border-b text-center bg-blue-50">合计</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b text-center">均衡</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template v-if="periodStats.columns.length > 0" v-for="(rows, catName) in periodStats.byCategory" :key="catName">
+                                    <tr class="bg-gray-50">
+                                        <td :colspan="periodStats.columns.length + 3" class="px-3 py-1.5 text-xs font-semibold text-gray-500 tracking-wide border-b">
+                                            {{ getCategoryName(catName) }}（{{ rows.length }}人）
+                                        </td>
+                                    </tr>
+                                    <tr v-for="row in rows" :key="row.doc.id" class="hover:bg-gray-50 border-b last:border-0">
+                                        <td class="p-3 font-medium sticky left-0 bg-white z-10 shadow-[1px_0_0_0_#e5e7eb]">{{ row.doc.name }}</td>
+                                        <td v-for="col in periodStats.columns" :key="col.id" class="p-3 text-center">
+                                            <span v-if="row.counts[col.id]" class="inline-block min-w-[24px] px-1.5 py-0.5 rounded text-xs font-medium" :class="'shift-color-' + col.color">{{ row.counts[col.id] }}</span>
+                                            <span v-else class="text-gray-300">—</span>
+                                        </td>
+                                        <td class="p-3 text-center font-bold text-blue-700 bg-blue-50">{{ row.total }}</td>
+                                        <td class="p-3 text-center">
+                                            <span v-if="row.balance === 'low'" class="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700" title="班次数低于平均值 75%">偏少</span>
+                                            <span v-else-if="row.balance === 'high'" class="inline-block px-1.5 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700" title="班次数高于平均值 125%">偏多</span>
+                                            <span v-else class="text-gray-300">—</span>
+                                        </td>
+                                    </tr>
+                                </template>
+                                <tr v-if="periodStats.columns.length === 0">
+                                    <td colspan="3" class="p-8 text-center text-gray-400">当前视图暂无排班数据</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Template Manager Modal -->
+        <div v-if="showTemplateManager" class="win7-modal-mask fixed inset-0 flex items-center justify-center z-[100]">
+            <div class="win7-modal-card w-full max-w-2xl max-h-[85vh] flex flex-col">
+                <div class="win7-modal-header px-6 py-4 flex justify-between items-center rounded-t-lg">
+                    <h3 class="text-lg font-bold text-gray-700">排班模板管理</h3>
+                    <button @click="showTemplateManager = false" class="text-gray-400 hover:text-red-500 transition">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="p-6 flex-grow overflow-auto flex flex-col gap-4">
+                    <div class="soft-info p-4 flex flex-col gap-2">
+                        <div class="text-sm font-medium text-gray-700">保存当前批量排班的循环序列为模板</div>
+                        <div class="text-xs text-gray-500">需先在"批量自动排班"中配置好循环班次序列，再点击此处保存。</div>
+                        <div class="flex gap-2 mt-1">
+                            <input v-model="newTemplateName" placeholder="输入模板名称" class="win7-input flex-1 p-2 text-sm bg-white">
+                            <button @click="saveCurrentCycleAsTemplate" class="win7-btn win7-btn-primary">保存模板</button>
+                        </div>
+                    </div>
+                    <div class="border rounded-lg overflow-hidden">
+                        <table class="w-full text-sm text-left border-collapse">
+                            <thead>
+                                <tr class="bg-gray-100">
+                                    <th class="p-3 font-semibold text-gray-600 border-b">模板名称</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">适用类别</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b">循环班次数</th>
+                                    <th class="p-3 font-semibold text-gray-600 border-b w-36 text-center">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="tpl in scheduleTemplates" :key="tpl.id" class="hover:bg-gray-50 border-b last:border-0">
+                                    <td class="p-3 font-medium">{{ tpl.name }}</td>
+                                    <td class="p-3 text-gray-500 text-xs">{{ getCategoryName(tpl.category) || tpl.category }}</td>
+                                    <td class="p-3 text-center text-gray-600">{{ tpl.cycleShiftIds?.length || 0 }}</td>
+                                    <td class="p-3 text-center">
+                                        <div class="flex items-center justify-center gap-1">
+                                            <button @click="applyTemplate(tpl)" class="win7-btn win7-btn-primary !min-h-[28px] !px-2 text-xs">套用</button>
+                                            <button @click="deleteTemplate(tpl.id)" class="win7-btn win7-btn-danger !min-h-[28px] !px-2 text-xs">删除</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                <tr v-if="scheduleTemplates.length === 0">
+                                    <td colspan="4" class="p-6 text-center text-gray-400">暂无保存的模板</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>

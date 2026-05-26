@@ -15,6 +15,7 @@ const app = createApp({
         });
         
         const API_URL = '/api/data';
+        const API_BASE = '/api';
         const AUTH_TOKEN_KEY = 'paiban_auth_token';
         const ACTIVE_DEPARTMENT_KEY = 'paiban_active_department_id';
         const ROLE_TERMINAL = 'terminal';
@@ -85,7 +86,7 @@ const app = createApp({
         const historyRecords = ref([]);
         const isLoadingHistory = ref(false);
         const recentClearAction = ref(null);
-        const HOLIDAY_DATES_2026 = [
+        const DEFAULT_HOLIDAY_DATES_2026 = [
             '2026-01-01', '2026-01-02', '2026-01-03',
             '2026-02-15', '2026-02-16', '2026-02-17', '2026-02-18', '2026-02-19', '2026-02-20', '2026-02-21', '2026-02-22', '2026-02-23',
             '2026-04-04', '2026-04-05', '2026-04-06',
@@ -94,7 +95,15 @@ const app = createApp({
             '2026-09-25', '2026-09-26', '2026-09-27',
             '2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07'
         ];
-        const HOLIDAY_DATE_SET = new Set(HOLIDAY_DATES_2026);
+        const holidays = ref([...DEFAULT_HOLIDAY_DATES_2026]);
+        const holidayDateSet = computed(() => new Set(holidays.value));
+        const lockedMonths = ref([]);
+        const scheduleTemplates = ref([]);
+        const showHolidayManager = ref(false);
+        const showTemplateManager = ref(false);
+        const showStatsModal = ref(false);
+        const newHolidayDate = ref('');
+        const newTemplateName = ref('');
         const BLANK_SHIFT_ID = 'sh_blank';
         const BLANK_SHIFT_DEFINITION = {
             id: BLANK_SHIFT_ID,
@@ -1099,6 +1108,11 @@ const app = createApp({
                 hydrateNoticeUpdatedAt();
                 recentClearAction.value = null;
                 uiSettings.value = normalizeUiSettings(data.uiSettings);
+                if (Array.isArray(data.holidays)) {
+                    holidays.value = [...data.holidays];
+                }
+                lockedMonths.value = Array.isArray(data.lockedMonths) ? [...data.lockedMonths] : [];
+                scheduleTemplates.value = Array.isArray(data.scheduleTemplates) ? [...data.scheduleTemplates] : [];
                 const cleanupResult = cleanupRestrictedHolidayShifts();
                 cleanedRestrictedShiftCount = cleanupResult.removedCount;
                 needsShiftMigration = needsShiftMigration || cleanupResult.changed;
@@ -1325,7 +1339,8 @@ const app = createApp({
 
         const showDoctorModal = ref(false);
         const showModuleManager = ref(false);
-        const newDoctor = ref({ name: '', title: '主治医师', category: 'first', phone: '' });
+        const newDoctor = ref({ name: '', title: '主治医师', category: 'first', phone: '', notes: '' });
+        const copyDoctorPopup = ref({ doctorId: null, targetModuleId: '' });
         
         const viewMode = ref('week'); // 'week' or 'month'
         const filterCategory = ref('all'); // 'all', 'first', 'second', 'third', 'trainee'
@@ -2749,6 +2764,12 @@ const app = createApp({
             const nextDepartmentId = String(departmentId || '').trim();
             if (!nextDepartmentId || nextDepartmentId === currentDepartmentId.value) return;
 
+            if (saveTimeout) {
+                clearTimeout(saveTimeout);
+                saveTimeout = null;
+                await saveData(true);
+            }
+
             showDoctorModal.value = false;
             showShiftManager.value = false;
             showAutoSchedule.value = false;
@@ -3145,6 +3166,7 @@ const app = createApp({
 
         function handleScheduleCellClick(doc, day, event) {
             if (!ensureCanEdit()) return;
+            if (!ensureNotLocked(day.dateStr)) return;
             openShiftPopup(doc, day, event);
         }
 
@@ -3275,7 +3297,8 @@ const app = createApp({
                         name,
                         title: '主治医师',
                         category: module.id,
-                        phone: ''
+                        phone: '',
+                        notes: ''
                     });
                     nextSequence += 1;
                 }
@@ -3298,13 +3321,15 @@ const app = createApp({
                     ...newDoctor.value,
                     name: newDoctor.value.name.trim(),
                     title: newDoctor.value.title.trim(),
-                    phone: (newDoctor.value.phone || '').trim()
+                    phone: (newDoctor.value.phone || '').trim(),
+                    notes: (newDoctor.value.notes || '').trim()
                 });
                 newDoctor.value = {
                     name: '',
                     title: '主治医师',
                     category: enabledModules.value[0]?.id || 'first',
-                    phone: ''
+                    phone: '',
+                    notes: ''
                 };
                 showAlert('人员添加成功');
             }
@@ -3314,12 +3339,9 @@ const app = createApp({
             doc.name = (doc.name || '').trim();
             doc.title = (doc.title || '').trim();
             doc.phone = (doc.phone || '').trim();
-            if (!doc.name) {
-                doc.name = '未命名人员';
-            }
-            if (!doc.title) {
-                doc.title = '未填写';
-            }
+            doc.notes = (doc.notes || '').trim();
+            if (!doc.name) doc.name = '未命名人员';
+            if (!doc.title) doc.title = '未填写';
         }
 
         function deleteDoctor(id) {
@@ -3334,6 +3356,35 @@ const app = createApp({
                 });
                 showAlert('人员已删除');
             }
+        }
+
+        function openCopyDoctorPopup(doctorId) {
+            const doc = doctors.value.find(d => d.id === doctorId);
+            if (!doc) return;
+            const firstOther = enabledModules.value.find(m => m.id !== doc.category);
+            copyDoctorPopup.value = { doctorId, targetModuleId: firstOther?.id || '' };
+        }
+
+        function closeCopyDoctorPopup() {
+            copyDoctorPopup.value = { doctorId: null, targetModuleId: '' };
+        }
+
+        function copyDoctorToModule() {
+            if (!ensureCanEdit()) return;
+            const { doctorId, targetModuleId } = copyDoctorPopup.value;
+            if (!doctorId || !targetModuleId) return;
+            const source = doctors.value.find(d => d.id === doctorId);
+            if (!source) return;
+            doctors.value.push({
+                id: createDoctorId(),
+                name: source.name,
+                title: source.title,
+                category: targetModuleId,
+                phone: source.phone || '',
+                notes: source.notes || ''
+            });
+            closeCopyDoctorPopup();
+            showAlert(`已将${source.name}复制到${getCategoryName(targetModuleId)}`);
         }
 
         function getAdjacentDoctorIndexInCategory(doctorId, direction) {
@@ -3428,7 +3479,209 @@ const app = createApp({
         }
 
         function isHoliday(dateStr) {
-            return HOLIDAY_DATE_SET.has(dateStr);
+            return holidayDateSet.value.has(dateStr);
+        }
+
+        function isDateLocked(dateStr) {
+            if (!dateStr || typeof dateStr !== 'string') return false;
+            const month = dateStr.slice(0, 7);
+            return lockedMonths.value.includes(month);
+        }
+
+        function ensureNotLocked(dateStr, options = {}) {
+            if (!isDateLocked(dateStr)) return true;
+            if (!options.silent) {
+                showAlert(`${dateStr.slice(0, 7)} 所在月份已锁定，不能修改排班`, 'error');
+            }
+            return false;
+        }
+
+        const currentViewMonths = computed(() => {
+            const months = new Set();
+            calendarDays.value.forEach(day => months.add(day.dateStr.slice(0, 7)));
+            return [...months];
+        });
+
+        const isCurrentPeriodLocked = computed(() => {
+            const targetMonth = currentViewMonths.value[0];
+            return targetMonth ? lockedMonths.value.includes(targetMonth) : false;
+        });
+
+        async function openHolidayManager() {
+            if (!ensureCanEdit()) return;
+            try {
+                const resp = await apiFetch(`${API_BASE}/holidays`);
+                if (Array.isArray(resp?.holidays)) holidays.value = [...resp.holidays];
+            } catch (e) { console.error('加载节假日失败', e); }
+            showHolidayManager.value = true;
+        }
+
+        async function addHoliday() {
+            if (!ensureCanEdit()) return;
+            const date = String(newHolidayDate.value || '').trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+                showAlert('请选择有效日期', 'error');
+                return;
+            }
+            try {
+                const resp = await apiFetch(`${API_BASE}/holidays`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date }) });
+                if (Array.isArray(resp?.holidays)) holidays.value = [...resp.holidays];
+                newHolidayDate.value = '';
+                showAlert('节假日已添加');
+            } catch (e) {
+                showAlert(e?.message || '添加失败', 'error');
+            }
+        }
+
+        async function removeHoliday(date) {
+            if (!ensureCanEdit()) return;
+            try {
+                const resp = await apiFetch(`${API_BASE}/holidays/${encodeURIComponent(date)}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
+                if (Array.isArray(resp?.holidays)) holidays.value = [...resp.holidays];
+                showAlert('节假日已移除');
+            } catch (e) {
+                showAlert(e?.message || '移除失败', 'error');
+            }
+        }
+
+        function prevSidebarDay() {
+            const d = new Date(selectedSidebarDate.value);
+            d.setDate(d.getDate() - 1);
+            selectedSidebarDate.value = formatDate(d);
+        }
+
+        function nextSidebarDay() {
+            const d = new Date(selectedSidebarDate.value);
+            d.setDate(d.getDate() + 1);
+            selectedSidebarDate.value = formatDate(d);
+        }
+
+        function resetSidebarDateToToday() {
+            selectedSidebarDate.value = formatDate(today);
+        }
+
+        const periodStats = computed(() => {
+            const dateStrs = calendarDays.value.map(d => d.dateStr);
+            const shiftMap = new Map(shiftTypes.value.map(s => [s.id, s]));
+            const rows = doctors.value
+                .filter(doc => isModuleEnabled(doc.category))
+                .map(doc => {
+                    const counts = {};
+                    let total = 0;
+                    dateStrs.forEach(dateStr => {
+                        const ids = scheduleData.value[dateStr]?.[doc.id] || [];
+                        ids.forEach(id => {
+                            if (id === BLANK_SHIFT_ID) return;
+                            counts[id] = (counts[id] || 0) + 1;
+                            total += 1;
+                        });
+                    });
+                    return { doc, counts, total };
+                });
+            const usedShiftIds = new Set();
+            rows.forEach(r => Object.keys(r.counts).forEach(id => usedShiftIds.add(id)));
+            const columns = shiftTypes.value.filter(s => usedShiftIds.has(s.id));
+            const totals = rows.map(r => r.total).filter(t => t > 0);
+            const avg = totals.length ? totals.reduce((a, b) => a + b, 0) / totals.length : 0;
+            const rowsWithBalance = rows.map(r => ({
+                ...r,
+                balance: avg === 0 ? 'normal' : r.total === 0 ? 'normal' : r.total < avg * 0.75 ? 'low' : r.total > avg * 1.25 ? 'high' : 'normal'
+            }));
+            const byCategory = {};
+            enabledModules.value.forEach(m => { byCategory[m.id] = []; });
+            rowsWithBalance.forEach(row => {
+                const cat = row.doc.category || 'other';
+                if (!byCategory[cat]) byCategory[cat] = [];
+                byCategory[cat].push(row);
+            });
+            Object.keys(byCategory).forEach(k => { if (!byCategory[k].length) delete byCategory[k]; });
+            return { rows: rowsWithBalance, byCategory, columns, shiftMap, avg: Math.round(avg * 10) / 10 };
+        });
+
+        function openStatsModal() {
+            showStatsModal.value = true;
+        }
+
+        async function toggleCurrentMonthLock() {
+            if (!ensureCanEdit()) return;
+            const months = currentViewMonths.value;
+            if (!months.length) return;
+            const targetMonth = months[0];
+            const isLocked = lockedMonths.value.includes(targetMonth);
+            try {
+                if (isLocked) {
+                    const resp = await apiFetch(`${API_BASE}/departments/${currentDepartmentId.value}/lock-month/${encodeURIComponent(targetMonth)}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
+                    if (Array.isArray(resp?.lockedMonths)) lockedMonths.value = [...resp.lockedMonths];
+                    showAlert(`${targetMonth} 已解锁`);
+                } else {
+                    const resp = await apiFetch(`${API_BASE}/departments/${currentDepartmentId.value}/lock-month`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ month: targetMonth }) });
+                    if (Array.isArray(resp?.lockedMonths)) lockedMonths.value = [...resp.lockedMonths];
+                    showAlert(`${targetMonth} 已锁定`);
+                }
+            } catch (e) {
+                showAlert(e?.message || '操作失败', 'error');
+            }
+        }
+
+        async function openTemplateManager() {
+            if (!ensureCanEdit()) return;
+            try {
+                const resp = await apiFetch(`${API_BASE}/templates`);
+                if (Array.isArray(resp?.scheduleTemplates)) scheduleTemplates.value = [...resp.scheduleTemplates];
+            } catch (e) { console.error('加载模板失败', e); }
+            showTemplateManager.value = true;
+        }
+
+        async function saveCurrentCycleAsTemplate() {
+            if (!ensureCanEdit()) return;
+            const name = String(newTemplateName.value || '').trim();
+            if (!name) {
+                showAlert('请输入模板名称', 'error');
+                return;
+            }
+            const category = activeAutoCategory.value || autoScheduleConfig.value.groupCategory || 'first';
+            const cycleShiftIds = [...autoScheduleConfig.value.cycleShiftIds];
+            if (!cycleShiftIds.length) {
+                showAlert('当前循环序列为空，无可保存内容', 'error');
+                return;
+            }
+            try {
+                const resp = await apiFetch(`${API_BASE}/templates`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, category, cycleShiftIds })
+                });
+                if (Array.isArray(resp?.scheduleTemplates)) scheduleTemplates.value = [...resp.scheduleTemplates];
+                newTemplateName.value = '';
+                showAlert('模板已保存');
+            } catch (e) {
+                showAlert(e?.message || '保存失败', 'error');
+            }
+        }
+
+        function applyTemplate(template) {
+            if (!ensureCanEdit()) return;
+            if (!template) return;
+            if (template.category && isModuleEnabled(template.category)) {
+                if (autoScheduleConfig.value.mode === 'group') {
+                    autoScheduleConfig.value.groupCategory = template.category;
+                }
+            }
+            autoScheduleConfig.value.cycleShiftIds = Array.isArray(template.cycleShiftIds) ? [...template.cycleShiftIds] : [];
+            showTemplateManager.value = false;
+            showAlert(`已加载模板：${template.name}`);
+        }
+
+        async function deleteTemplate(id) {
+            if (!ensureCanEdit()) return;
+            if (!confirm('确定删除该模板吗？')) return;
+            try {
+                const resp = await apiFetch(`${API_BASE}/templates/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } });
+                if (Array.isArray(resp?.scheduleTemplates)) scheduleTemplates.value = [...resp.scheduleTemplates];
+                showAlert('模板已删除');
+            } catch (e) {
+                showAlert(e?.message || '删除失败', 'error');
+            }
         }
 
         function isWeekendOrHoliday(dateStr) {
@@ -3519,8 +3772,7 @@ const app = createApp({
                     latestSavedShiftId.value = editingShift.value.id;
                     shiftTypes.value[index] = {
                         ...editingShift.value,
-                        name: trimmedName,
-                        short: trimmedName
+                        name: trimmedName
                     };
                     showAlert('班次更新成功');
                 }
@@ -3532,7 +3784,6 @@ const app = createApp({
                     ...editingShift.value,
                     id: newShiftId,
                     name: trimmedName,
-                    short: trimmedName,
                     categories: [...editingShift.value.categories]
                 });
                 showAlert('班次添加成功');
@@ -3661,7 +3912,8 @@ const app = createApp({
             return scheduleData.value[dateStr][doctorId];
         }
 
-        function clearDoctorDayShifts(doctorId, dateStr) {
+        function clearDoctorDayShifts(doctorId, dateStr, options = {}) {
+            if (!ensureNotLocked(dateStr, options)) return;
             if (scheduleData.value[dateStr]?.[doctorId]) {
                 delete scheduleData.value[dateStr][doctorId];
             }
@@ -3692,9 +3944,43 @@ const app = createApp({
             return true;
         }
 
+        function getConsecutiveScheduledDays(doctorId, anchorDateStr) {
+            const anchor = new Date(anchorDateStr);
+            let count = 1;
+            const d = new Date(anchor);
+            d.setDate(d.getDate() - 1);
+            while (getShiftIds(doctorId, formatDate(d)).filter(id => id !== BLANK_SHIFT_ID).length > 0) {
+                count++;
+                d.setDate(d.getDate() - 1);
+                if (count > 30) break;
+            }
+            const d2 = new Date(anchor);
+            d2.setDate(d2.getDate() + 1);
+            while (getShiftIds(doctorId, formatDate(d2)).filter(id => id !== BLANK_SHIFT_ID).length > 0) {
+                count++;
+                d2.setDate(d2.getDate() + 1);
+                if (count > 30) break;
+            }
+            return count;
+        }
+
+        function validateConsecutiveDays(dateStr, doctorId, options = {}) {
+            if (options.silent) return true;
+            const WARN_THRESHOLD = 6;
+            const consecutive = getConsecutiveScheduledDays(doctorId, dateStr);
+            if (consecutive >= WARN_THRESHOLD) {
+                const doc = doctors.value.find(d => d.id === doctorId);
+                const name = doc?.name || doctorId;
+                showAlert(`注意：${name} 连续上班将达 ${consecutive} 天，请确认是否合理`, 'error');
+            }
+            return true;
+        }
+
         function addShiftEntry(dateStr, doctorId, doctorCategory, shiftId, options = {}) {
+            if (!ensureNotLocked(dateStr, options)) return false;
             if (!validateRestrictedHolidayShift(dateStr, shiftId, options)) return false;
             if (!validateFirstOnCall(dateStr, doctorId, shiftId)) return false;
+            validateConsecutiveDays(dateStr, doctorId, options);
 
             const shiftIds = normalizeDoctorDay(dateStr, doctorId);
             if (shiftIds.includes(shiftId)) {
@@ -3767,6 +4053,7 @@ const app = createApp({
         function assignShift(shiftType) {
             if (!ensureCanEdit()) return;
             const { docId, docCategory, dateStr } = popup.value;
+            if (!ensureNotLocked(dateStr)) return;
             
             if (!scheduleData.value[dateStr]) {
                 scheduleData.value[dateStr] = {};
@@ -3817,13 +4104,19 @@ const app = createApp({
 
         async function clearCurrentView() {
             if (!ensureCanEdit()) return;
-            if (!confirm('确定要清空当前视图内的所有排班数据吗？可通过“撤销最近一次清空”恢复。')) return;
+            const lockedDates = calendarDays.value.filter(day => isDateLocked(day.dateStr));
+            if (lockedDates.length === calendarDays.value.length) {
+                showAlert('当前视图内所有日期均已锁定，无法清空', 'error'); return;
+            }
+            const lockedNote = lockedDates.length ? `（已锁定的 ${lockedDates.length} 天不受影响）` : '';
+            if (!confirm(`确定要清空当前视图内的排班数据吗？${lockedNote}可通过“撤销最近一次清空”恢复。`)) return;
 
             await runClearActionWithUndo(
                 `清空当前视图前留存 - ${displayDateRange.value}`,
                 '当前排班已清空，可撤销最近一次清空',
                 () => {
                     calendarDays.value.forEach(day => {
+                        if (isDateLocked(day.dateStr)) return;
                         if (scheduleData.value[day.dateStr]) {
                             if (filterCategory.value === 'all') {
                                 delete scheduleData.value[day.dateStr];
@@ -3846,13 +4139,20 @@ const app = createApp({
 
         async function clearAllSchedule() {
             if (!ensureCanEdit()) return;
-            if (!confirm('确定要清空系统内全部排班数据吗？可通过“撤销最近一次清空”恢复。')) return;
+            const lockedNote = lockedMonths.value.length ? `（已锁定月份 ${lockedMonths.value.join('、')} 不受影响）` : '';
+            if (!confirm(`确定要清空系统内全部排班数据吗？${lockedNote}可通过“撤销最近一次清空”恢复。`)) return;
 
             await runClearActionWithUndo(
                 '清空全部排班前留存',
                 '全部排班已清空，可撤销最近一次清空',
                 () => {
-                    scheduleData.value = {};
+                    if (lockedMonths.value.length === 0) {
+                        scheduleData.value = {};
+                    } else {
+                        Object.keys(scheduleData.value).forEach(dateStr => {
+                            if (!isDateLocked(dateStr)) delete scheduleData.value[dateStr];
+                        });
+                    }
                 }
             );
         }
@@ -3885,13 +4185,16 @@ const app = createApp({
             if (!ensureCanEdit()) return;
             const groupName = getGroupName(groupCategory);
             const { label, dateStrList } = getCurrentMonthDateRange();
-            if (!confirm(`确定要清空【${label}】内所有【${groupName}】的排班数据吗？可通过“撤销最近一次清空”恢复。`)) return;
+            const lockedCount = dateStrList.filter(d => isDateLocked(d)).length;
+            const lockedNote = lockedCount ? `（已锁定的 ${lockedCount} 天不受影响）` : '';
+            if (!confirm(`确定要清空【${label}】内所有【${groupName}】的排班数据吗？${lockedNote}可通过“撤销最近一次清空”恢复。`)) return;
 
             await runClearActionWithUndo(
                 `清空${label}${groupName}前留存`,
                 `已清空【${label}】的【${groupName}】排班，可撤销最近一次清空`,
                 () => {
                     dateStrList.forEach(dateStr => {
+                        if (isDateLocked(dateStr)) return;
                         if (scheduleData.value[dateStr]) {
                             Object.keys(scheduleData.value[dateStr]).forEach(docId => {
                                 const doc = doctorMap.value.get(docId);
@@ -3949,6 +4252,17 @@ const app = createApp({
                 showAlert(autoScheduleConfig.value.mode === 'group' ? '当前分组没有可排班人员' : '请选择需要排班的人员', 'error');
                 return;
             }
+            const start0 = new Date(autoScheduleConfig.value.startDate);
+            const end0 = new Date(autoScheduleConfig.value.endDate);
+            const rangeMonths = new Set();
+            for (let d = new Date(start0); d <= end0; d.setDate(d.getDate() + 1)) {
+                rangeMonths.add(formatDate(d).slice(0, 7));
+            }
+            const blockedMonths = [...rangeMonths].filter(m => lockedMonths.value.includes(m));
+            if (blockedMonths.length) {
+                showAlert(`以下月份已锁定，无法执行自动排班：${blockedMonths.join('、')}`, 'error');
+                return;
+            }
 
             const start = new Date(autoScheduleConfig.value.startDate);
             const end = new Date(autoScheduleConfig.value.endDate);
@@ -3980,7 +4294,7 @@ const app = createApp({
                     const skipCycleToday = autoScheduleConfig.value.skipWeekend && isWeekend;
 
                     // --- Clear existing shifts for this doctor on this day before applying new auto-schedule ---
-                    clearDoctorDayShifts(doctor.id, dateStr);
+                    clearDoctorDayShifts(doctor.id, dateStr, { silent: true });
 
                     // 如果设置了跳过周末且当前是周末，且没有固定门诊，则跳过
                     if (autoScheduleConfig.value.skipWeekend && (dayOfWeek === 0 || dayOfWeek === 6) && !fixedClinicShiftId) {
@@ -4171,6 +4485,54 @@ const app = createApp({
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         }
 
+        function exportIcal(doctorId = '') {
+            if (!authToken.value && !currentUser.value) { showAlert('请先登录后再导出', 'error'); return; }
+            const targetDoctors = doctorId
+                ? doctors.value.filter(d => d.id === doctorId)
+                : doctors.value.filter(d => isModuleEnabled(d.category));
+            if (!targetDoctors.length) { showAlert('没有可导出的人员', 'error'); return; }
+            const lines = [
+                'BEGIN:VCALENDAR',
+                'VERSION:2.0',
+                'PRODID:-//PaiBan//Schedule//ZH',
+                'CALSCALE:GREGORIAN',
+                'METHOD:PUBLISH'
+            ];
+            const deptName = departments.value.find(d => d.id === currentDepartmentId.value)?.name || '排班';
+            const toIcalDate = str => str.replace(/-/g, '');
+            const nextDayStr = dateStr => {
+                const d = new Date(dateStr);
+                d.setDate(d.getDate() + 1);
+                return formatDate(d);
+            };
+            Object.entries(scheduleData.value).forEach(([dateStr, dayData]) => {
+                targetDoctors.forEach(doc => {
+                    const shiftIds = dayData?.[doc.id] || [];
+                    shiftIds.filter(id => id !== BLANK_SHIFT_ID).forEach(shiftId => {
+                        const shift = getShiftDefinition(shiftId);
+                        if (!shift) return;
+                        const uid = `${dateStr}-${doc.id}-${shiftId}@paiban`;
+                        const dtStamp = toIcalDate(new Date().toISOString().slice(0, 10)) + 'T000000Z';
+                        lines.push(
+                            'BEGIN:VEVENT',
+                            `UID:${uid}`,
+                            `DTSTAMP:${dtStamp}`,
+                            `DTSTART;VALUE=DATE:${toIcalDate(dateStr)}`,
+                            `DTEND;VALUE=DATE:${toIcalDate(nextDayStr(dateStr))}`,
+                            `SUMMARY:${doc.name} — ${shift.name}`,
+                            `DESCRIPTION:${deptName} · ${doc.title}`,
+                            'END:VEVENT'
+                        );
+                    });
+                });
+            });
+            lines.push('END:VCALENDAR');
+            const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+            const suffix = doctorId ? (targetDoctors[0]?.name || doctorId) : '全员';
+            downloadBlob(blob, `${deptName}_排班_${suffix}.ics`);
+            showAlert('iCal 日历导出成功');
+        }
+
         function exportExcel() {
             if (!ensureCanEdit('仅管理员及以上可导出排班')) return;
             const { headerRows, bodyRows } = buildExportTableData();
@@ -4227,6 +4589,24 @@ const app = createApp({
             }
         }
 
+        function exportDoctorsExcel() {
+            if (!ensureCanEdit('仅管理员及以上可导出人员信息')) return;
+            const header = ['姓名', '职称/职务', '人员类别', '联系电话', '备注'];
+            const rows = doctors.value.map(doc => [
+                doc.name || '',
+                doc.title || '',
+                getCategoryName(doc.category),
+                doc.phone || '',
+                doc.notes || ''
+            ]);
+            const ws = XLSX.utils.aoa_to_sheet([header, ...rows]);
+            ws['!cols'] = [{ wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 24 }];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, '人员信息');
+            XLSX.writeFile(wb, `人员信息_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.xlsx`);
+            showAlert('人员信息 Excel 导出成功');
+        }
+
         // --- Module UX Helpers ---
         function isModuleSidebarRuleEnabled(module) {
             const mode = module?.sidebarMode || '';
@@ -4278,7 +4658,14 @@ const app = createApp({
             if (isModuleSidebarRuleHidden(module)) {
                 return '当前为“不在右侧展示”，下方所有显示控制均已停用。';
             }
-            return '';
+            const mode = module?.sidebarMode || '';
+            if (mode === 'module_keyword') {
+                return '仅提取名称或简称命中关键字的班次。';
+            }
+            if (mode === 'module_shift_whitelist') {
+                return '仅提取已勾选到白名单内的班次。';
+            }
+            return '当前模块会以单独模块行显示在右侧，可继续细化展示方式。';
         }
 
         function getModuleSidebarValidationMessages(module) {
@@ -4349,6 +4736,12 @@ const app = createApp({
             showAdminManager, adminAccounts, newAdmin, editingAdminId, isEditingAdminAccount, departmentOptions, canSubmitAdminForm, getAdminDepartmentNames, openAdminManager, editAdminAccount, cancelAdminEdit, createAdminAccount, deleteAdminAccount,
             showHistoryManager, historyRecords, isLoadingHistory, openHistoryManager, restoreHistoryRecord, deleteHistoryRecord, formatHistoryTime,
             doctors, enabledDoctors, showDoctorModal, newDoctor, addDoctor, fillDefaultDoctorsForModules, deleteDoctor, moveDoctor, canMoveDoctorUp, canMoveDoctorDown, normalizeDoctorEditableFields, doctorTitleOptions,
+            copyDoctorPopup, openCopyDoctorPopup, closeCopyDoctorPopup, copyDoctorToModule,
+            holidays, showHolidayManager, newHolidayDate, openHolidayManager, addHoliday, removeHoliday,
+            lockedMonths, currentViewMonths, isCurrentPeriodLocked, isDateLocked, toggleCurrentMonthLock,
+            scheduleTemplates, showTemplateManager, newTemplateName, openTemplateManager, saveCurrentCycleAsTemplate, applyTemplate, deleteTemplate,
+            showStatsModal, periodStats, openStatsModal,
+            prevSidebarDay, nextSidebarDay, resetSidebarDateToToday,
             viewMode, filterCategory, currentMonth, displayDateRange, calendarDays,
             compactMode,
             groupedDoctors, doctorCategoryOptions, clearableModules, autoScheduleModules, getGroupName, getCategoryName,
@@ -4356,7 +4749,7 @@ const app = createApp({
             getShift, getShiftName, getScheduleCellShiftName, getShiftColorClass, getScheduleCellShiftClass,
             popup, closePopup, getAvailableShifts, getAvailableShiftGroups, assignShift, savePopupAssignments, handleScheduleCellClick,
             getShifts, getMainScheduleShifts, hasShiftAssigned, clearDoctorDayShifts,
-            exportExcel, exportWord, exportPDF,
+            exportExcel, exportWord, exportPDF, exportIcal, exportDoctorsExcel,
             shiftTypes, sortedShiftTypes, colorOptions, showShiftManager, editingShift,
             saveShift, editShift, deleteShift, resetEditingShift, openShiftManager,
             showAutoSchedule, autoScheduleConfig, weekdayOptions, selectedAutoDoctor, activePrimaryManager,
